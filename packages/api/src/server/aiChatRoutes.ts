@@ -22,6 +22,7 @@ import {
   MAGNIFIC_IMAGE_MODELS,
   MAGNIFIC_VIDEO_MODELS,
 } from './magnificRoutes.ts';
+import { durableMediaUrl, durableMediaUrls } from './mediaStore.ts';
 
 const OUT_OF_CREDITS_MSG = "You need more AI credits. Buy credits without changing your plan, or wait for your monthly allowance reset.";
 
@@ -962,6 +963,9 @@ export function registerAIChatRoutes({
           magnificKey
         );
         if (r.error || !r.url) return { success: false, error: r.error || 'Magnific One returned no URL' };
+        // Provider links expire; the chat and library get the object-storage copy.
+        r.url = await durableMediaUrl(r.url, userId);
+        if (Array.isArray((r as any).urls)) (r as any).urls = await durableMediaUrls((r as any).urls, userId);
         const genId = randomUUID();
         await dbQuery(
           `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status, task_id, result_url, completed_at)
@@ -988,6 +992,9 @@ export function registerAIChatRoutes({
           }
         );
         if (r.error || !r.url) return { success: false, error: r.error || 'Magnific image generation failed' };
+        // Provider links expire; the chat and library get the object-storage copy.
+        r.url = await durableMediaUrl(r.url, userId);
+        if (Array.isArray((r as any).urls)) (r as any).urls = await durableMediaUrls((r as any).urls, userId);
         const genId = randomUUID();
         await dbQuery(
           `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status, result_url, completed_at)
@@ -1004,6 +1011,9 @@ export function registerAIChatRoutes({
         const creditCost = editType === 'remove-background' ? 1 : 5;
         const r = await magnificEditImage({ ...input, type: editType }, magnificKey);
         if (r.error || !r.url) return { success: false, error: r.error || 'Magnific image edit failed' };
+        // Provider links expire; the chat and library get the object-storage copy.
+        r.url = await durableMediaUrl(r.url, userId);
+        if (Array.isArray((r as any).urls)) (r as any).urls = await durableMediaUrls((r as any).urls, userId);
         const genId = randomUUID();
         await dbQuery(
           `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status, task_id, result_url, completed_at)
@@ -1020,6 +1030,9 @@ export function registerAIChatRoutes({
         const creditCost = MAGNIFIC_VIDEO_MODELS[modelKey]?.credits ?? 25;
         const r = await magnificGenerateVideo({ ...input, model: modelKey }, magnificKey);
         if (r.error || !r.url) return { success: false, error: r.error || 'Magnific video generation failed' };
+        // Provider links expire; the chat and library get the object-storage copy.
+        r.url = await durableMediaUrl(r.url, userId);
+        if (Array.isArray((r as any).urls)) (r as any).urls = await durableMediaUrls((r as any).urls, userId);
         const genId = randomUUID();
         await dbQuery(
           `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status, task_id, result_url, completed_at)
@@ -1044,6 +1057,9 @@ export function registerAIChatRoutes({
           magnificKey
         );
         if (r.error || !r.url) return { success: false, error: r.error || 'OmniHuman 1.5 lip-sync failed' };
+        // Provider links expire; the chat and library get the object-storage copy.
+        r.url = await durableMediaUrl(r.url, userId);
+        if (Array.isArray((r as any).urls)) (r as any).urls = await durableMediaUrls((r as any).urls, userId);
         const genId = randomUUID();
         await dbQuery(
           `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status, task_id, result_url, completed_at)
@@ -1072,6 +1088,9 @@ export function registerAIChatRoutes({
           magnificKey
         );
         if (r.error || !r.url) return { success: false, error: r.error || 'Magnific audio generation failed' };
+        // Provider links expire; the chat and library get the object-storage copy.
+        r.url = await durableMediaUrl(r.url, userId);
+        if (Array.isArray((r as any).urls)) (r as any).urls = await durableMediaUrls((r as any).urls, userId);
         const genId = randomUUID();
         await dbQuery(
           `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status, task_id, result_url, completed_at)
@@ -1091,6 +1110,7 @@ export function registerAIChatRoutes({
         const action = input?.action || 'run_space';
         const r = await magnificExecuteSpaceOrFlow({ ...input, action }, magnificKey, mcpCaller);
         if (r.success && r.final_url && (action === 'run_space' || action === 'run_flow')) {
+          r.final_url = await durableMediaUrl(r.final_url, userId);
           const genId = randomUUID();
           await dbQuery(
             `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status, result_url, completed_at)

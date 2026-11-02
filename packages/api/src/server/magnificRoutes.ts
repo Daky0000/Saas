@@ -9,6 +9,7 @@ import { encryptPlatformConfig, decryptPlatformConfig } from '../integration-hel
 import { chargeAICredits } from '../ai-helpers.ts';
 import { getBackendPublicUrl } from '../platform-helpers.ts';
 import { config } from '../config.ts';
+import { durableMediaUrl, durableMediaUrls } from './mediaStore.ts';
 import { callMagnificMcpTool } from './mcpRoutes.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
@@ -228,19 +229,42 @@ export function magnificTaskUrls(data: any): string[] {
     .filter(Boolean);
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Retry-After in ms (seconds or HTTP date), capped; null when absent. */
+function retryAfterMs(headers: any, capMs: number): number | null {
+  const raw = headers?.['retry-after'];
+  if (raw == null) return null;
+  const secs = Number(raw);
+  const ms = Number.isFinite(secs) ? secs * 1000 : Date.parse(String(raw)) - Date.now();
+  return Number.isFinite(ms) && ms > 0 ? Math.min(ms, capMs) : null;
+}
+
+// 429 and 503 mean the task was not created, so resubmitting cannot start (and
+// bill) it twice. Other failures, including a network error mid-request where
+// the task may already exist, are returned as before for the caller to report.
+const MAGNIFIC_SUBMIT_RETRY_STATUSES = new Set([429, 503]);
+export const MAGNIFIC_SUBMIT_MAX_ATTEMPTS = 4;
+
 export async function magnificPost(path: string, body: object, apiKey: string) {
   const target = await currentWebhookTarget();
   if (target && !('webhook_url' in body)) body = { ...body, webhook_url: target };
-  return axios.post(`${MAGNIFIC_BASE}${path}`, body, {
-    headers: proxyHeaders({
-      'x-magnific-api-key': apiKey,
-      'Content-Type': 'application/json',
-      'Origin': 'https://app.magnific.com',
-      'Referer': 'https://app.magnific.com/',
-    }),
-    validateStatus: () => true,
-    timeout: 20000,
-  });
+  for (let attempt = 1; ; attempt++) {
+    const res = await axios.post(`${MAGNIFIC_BASE}${path}`, body, {
+      headers: proxyHeaders({
+        'x-magnific-api-key': apiKey,
+        'Content-Type': 'application/json',
+        'Origin': 'https://app.magnific.com',
+        'Referer': 'https://app.magnific.com/',
+      }),
+      validateStatus: () => true,
+      timeout: 20000,
+    });
+    if (!MAGNIFIC_SUBMIT_RETRY_STATUSES.has(res.status) || attempt >= MAGNIFIC_SUBMIT_MAX_ATTEMPTS) return res;
+    const wait = retryAfterMs(res.headers, 30_000) ?? 1000 * 2 ** attempt + Math.floor(Math.random() * 500);
+    logger.warn({ path, status: res.status, attempt, waitMs: wait }, 'magnific_submit_retry');
+    await sleep(wait);
+  }
 }
 
 export async function pollMagnificTask(
@@ -249,18 +273,39 @@ export async function pollMagnificTask(
   maxSeconds = 120,
   onProgress?: (status: string) => void
 ): Promise<{ url: string | null; urls?: string[]; error: string | null }> {
-  const deadline = Date.now() + maxSeconds * 1000;
+  const started = Date.now();
+  const deadline = started + maxSeconds * 1000;
+  let lastProblem = '';
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 3000));
-    const r = await axios.get(`${MAGNIFIC_BASE}${taskPath}`, {
-      headers: proxyHeaders({
-        'x-magnific-api-key': apiKey,
-        'Origin': 'https://app.magnific.com',
-        'Referer': 'https://app.magnific.com/',
-      }),
-      validateStatus: () => true,
-      timeout: 12000,
-    });
+    // Quick early checks for fast models; slower ones for long video renders.
+    const elapsed = Date.now() - started;
+    await sleep(elapsed < 30_000 ? 3000 : elapsed < 120_000 ? 5000 : 8000);
+    let r;
+    try {
+      r = await axios.get(`${MAGNIFIC_BASE}${taskPath}`, {
+        headers: proxyHeaders({
+          'x-magnific-api-key': apiKey,
+          'Origin': 'https://app.magnific.com',
+          'Referer': 'https://app.magnific.com/',
+        }),
+        validateStatus: () => true,
+        timeout: 12000,
+      });
+    } catch (err: any) {
+      // The task keeps running (and is billed) whether or not one status check
+      // gets through, so a network blip must not fail it.
+      lastProblem = `network error (${err?.code || err?.message || 'unknown'})`;
+      continue;
+    }
+    if (r.status === 401 || r.status === 403) {
+      return { url: null, urls: [], error: sanitizeMagnificError(`HTTP ${r.status}: ${r.data?.message ?? 'not authorised to read this task'}`) };
+    }
+    if (r.status === 429 || r.status >= 500) {
+      lastProblem = `HTTP ${r.status}`;
+      const wait = retryAfterMs(r.headers, 20_000);
+      if (wait) await sleep(wait);
+      continue;
+    }
     const data = r.data?.data ?? r.data;
     const status: string = String(data?.status ?? '').toUpperCase();
     onProgress?.(status);
@@ -272,7 +317,7 @@ export async function pollMagnificTask(
       return { url: null, urls: [], error: data?.error ?? data?.message ?? 'Generation failed' };
     }
   }
-  return { url: null, urls: [], error: 'Timeout: generation took too long' };
+  return { url: null, urls: [], error: `Timeout: generation took too long${lastProblem ? ` (last status check: ${lastProblem})` : ''}` };
 }
 
 export interface MagnificOneOptions {
@@ -1105,7 +1150,7 @@ export async function freepikGenerateImage(
 
   const deadline = Date.now() + 150_000;
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 4000));
+    await sleep(4000);
     const pollResp = await axios.get(`${FREEPIK_BASE}/v1/ai/mystic/${taskId}`, {
       headers: proxyHeaders({
         'x-freepik-api-key': apiKey,
@@ -1114,7 +1159,8 @@ export async function freepikGenerateImage(
       }),
       validateStatus: () => true,
       timeout: 10000,
-    });
+    }).catch(() => null); // a missed status check must not fail a running task
+    if (!pollResp) continue;
     const data = pollResp.data?.data ?? pollResp.data;
     const status: string = data?.status ?? '';
     onProgress?.(status);
@@ -1424,6 +1470,9 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
         return res.status(400).json({ error: errMsg });
       }
 
+      // Provider links expire; keep a copy in object storage (R2) and hand that out.
+      result.url = await durableMediaUrl(result.url, auth.userId);
+      if (Array.isArray((result as any).urls)) (result as any).urls = await durableMediaUrls((result as any).urls, auth.userId);
       await pool!.query(
         `UPDATE magnific_generations SET task_id=$1, status='completed', result_url=$2, completed_at=NOW() WHERE id=$3`,
         [result.taskId, result.url, genId]
@@ -1487,6 +1536,9 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
         return res.status(400).json({ error: errMsg });
       }
 
+      // Provider links expire; keep a copy in object storage (R2) and hand that out.
+      result.url = await durableMediaUrl(result.url, auth.userId);
+      if (Array.isArray((result as any).urls)) (result as any).urls = await durableMediaUrls((result as any).urls, auth.userId);
       await pool!.query(
         `UPDATE magnific_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`,
         [result.url, genId]
@@ -1554,6 +1606,9 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
         return res.status(400).json({ error: errMsg });
       }
 
+      // Provider links expire; keep a copy in object storage (R2) and hand that out.
+      editResult.url = await durableMediaUrl(editResult.url, auth.userId);
+      if (Array.isArray((editResult as any).urls)) (editResult as any).urls = await durableMediaUrls((editResult as any).urls, auth.userId);
       await pool!.query(
         `UPDATE magnific_generations SET task_id=$1, status='completed', result_url=$2, completed_at=NOW() WHERE id=$3`,
         [editResult.taskId, editResult.url, genId]
@@ -1605,6 +1660,9 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
         return res.status(400).json({ error: errMsg });
       }
 
+      // Provider links expire; keep a copy in object storage (R2) and hand that out.
+      result.url = await durableMediaUrl(result.url, auth.userId);
+      if (Array.isArray((result as any).urls)) (result as any).urls = await durableMediaUrls((result as any).urls, auth.userId);
       await pool!.query(
         `UPDATE magnific_generations SET task_id=$1, status='completed', result_url=$2, completed_at=NOW() WHERE id=$3`,
         [result.taskId, result.url, genId]
@@ -1661,6 +1719,9 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
         return res.status(400).json({ error: errMsg });
       }
 
+      // Provider links expire; keep a copy in object storage (R2) and hand that out.
+      result.url = await durableMediaUrl(result.url, auth.userId);
+      if (Array.isArray((result as any).urls)) (result as any).urls = await durableMediaUrls((result as any).urls, auth.userId);
       await pool!.query(
         `UPDATE magnific_generations SET task_id=$1, status='completed', result_url=$2, completed_at=NOW() WHERE id=$3`,
         [result.taskId, result.url, genId]
@@ -1715,6 +1776,9 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
         return res.status(400).json({ error: errMsg });
       }
 
+      // Provider links expire; keep a copy in object storage (R2) and hand that out.
+      result.url = await durableMediaUrl(result.url, auth.userId);
+      if (Array.isArray((result as any).urls)) (result as any).urls = await durableMediaUrls((result as any).urls, auth.userId);
       await pool!.query(
         `UPDATE magnific_generations SET task_id=$1, status='completed', result_url=$2, completed_at=NOW() WHERE id=$3`,
         [result.taskId, result.url, genId]
@@ -1774,6 +1838,7 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
     }
 
     if (result.final_url) {
+      result.final_url = await durableMediaUrl(result.final_url, auth.userId);
       const genId = randomUUID();
       await pool!.query(
         `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status, result_url, completed_at)

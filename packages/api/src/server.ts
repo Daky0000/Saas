@@ -116,6 +116,7 @@ import { registerLinkedInRoutes } from './server/linkedinRoutes.ts';
 import { registerSocialConnectRoutes, type SocialConnectDeps } from './server/socialConnectRoutes.ts';
 import { registerSocialRoutes } from './server/socialRoutes.ts';
 import { buildMediaModule } from './server/mediaRoutes.ts';
+import { registerMediaStoreRoutes } from './server/mediaStore.ts';
 import { registerCardTemplateRoutes } from './server/cardRoutes.ts';
 import { registerPricingRoutes } from './server/pricingRoutes.ts';
 import { registerWordPressRoutes } from './server/wordpressRoutes.ts';
@@ -291,6 +292,8 @@ app.use(
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
         imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+        // Stored video/audio redirects to the R2 bucket host, as images do.
+        mediaSrc: ["'self'", 'data:', 'blob:', 'https:'],
         connectSrc: [
           "'self'",
           config.appUrl,
@@ -714,6 +717,8 @@ app.use('/api/pages', registerPagesRoutes({ requireAdmin, hasDatabase, pool: poo
 
 // ─── Media Library ─────────────────────────────────────────────────────────────
 const mediaModule = buildMediaModule({ requireAuth, requireAdmin, hasDatabase, pool });
+// Before the media module: its /media/:id/:filename would otherwise claim /media/r2/<file>.
+app.use('/', registerMediaStoreRoutes());
 app.use('/', mediaModule.router);
 syncProfileMedia = mediaModule.syncProfileMedia;
 syncCardTemplateMedia = mediaModule.syncCardTemplateMedia;
@@ -1199,9 +1204,10 @@ if (config.nodeEnv !== 'test') {
     setTimeout(() => void processMcpMediaSync(pool, decryptIntegrationSecret), 5 * 60 * 1000);
     setInterval(() => void processMcpMediaSync(pool, decryptIntegrationSecret), 6 * 60 * 60 * 1000);
 
-    // Run due auto-content plans (e.g. 3 promo pieces/day) every 10 minutes.
+    // Run due auto-content plans every 2 minutes, so a 20/day plan (a slot every
+    // 72 minutes) runs close to its slot. Ticks never overlap.
     void contentPlanEngine.processDueContentPlans();
-    setInterval(() => void contentPlanEngine.processDueContentPlans(), 10 * 60 * 1000);
+    setInterval(() => void contentPlanEngine.processDueContentPlans(), 2 * 60 * 1000);
 
     // ── AI Sales OS ──
     // Analyse finished conversations every minute — a rep who just logged a

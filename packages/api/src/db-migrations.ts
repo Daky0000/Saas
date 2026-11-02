@@ -2165,6 +2165,11 @@ await pool.query(`ALTER TABLE content_plans ADD CONSTRAINT content_plans_status_
 await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS plan_blueprint JSONB NOT NULL DEFAULT '{}'::jsonb;`).catch(() => undefined);
 await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS pricing_breakdown JSONB NOT NULL DEFAULT '{}'::jsonb;`).catch(() => undefined);
 await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS duration_days INTEGER NOT NULL DEFAULT 30;`).catch(() => undefined);
+// Volume plans: up to 48 pieces a day (was 6), and an opt-in to publish each
+// piece at its slot instead of holding it for review.
+await pool.query(`ALTER TABLE content_plans DROP CONSTRAINT IF EXISTS content_plans_per_day_check;`).catch(() => undefined);
+await pool.query(`ALTER TABLE content_plans ADD CONSTRAINT content_plans_per_day_check CHECK (per_day BETWEEN 1 AND 48);`).catch(() => undefined);
+await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS auto_publish BOOLEAN NOT NULL DEFAULT false;`).catch(() => undefined);
 
 // Test account: keep "User One" topped up at 1,000,000 credits (re-applied
 // on deploy if the lazy monthly reset knocked it down). Opt-in only — see

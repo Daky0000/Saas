@@ -11,6 +11,7 @@ import { getAIConfig, resolveActiveKey, callAINonStreaming, hasAICredits, charge
 import { buildSharedAgentContext } from './agentSharedContext.ts';
 import { magnificOneGenerate, magnificGenerateImage } from './magnificRoutes.ts';
 import { DEFAULT_OPENAI_IMAGE_MODEL } from './openaiRoutes.ts';
+import { durableMediaUrl, getMediaStorage, storeMediaBytes } from './mediaStore.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auto-content plans.
@@ -50,6 +51,36 @@ const RATE_COPY_PER_POST = 2;
 const RATE_QA_PER_POST = 1;
 const RATE_PER_IMAGE = 3;
 
+// Pieces per day a plan may ask for. The DB constraint matches.
+export const MAX_PLAN_PER_DAY = 48;
+export const clampPerDay = (raw: unknown) => Math.min(MAX_PLAN_PER_DAY, Math.max(1, parseInt(String(raw ?? 3), 10) || 3));
+
+// How many due plans one tick generates at once. Each run mostly waits on the
+// model and image provider, so a few in parallel multiply throughput without
+// tripping provider rate limits (Magnific 429s are retried with backoff).
+const PLAN_RUN_CONCURRENCY = Math.max(1, Number(process.env.CONTENT_PLAN_CONCURRENCY) || 3);
+
+// Auto-published pieces go out shortly after generation (a moment to catch
+// a bad one on the calendar); reviewed pieces keep the 3-hour window.
+const AUTO_PUBLISH_DELAY_MS = 10 * 60 * 1000;
+const REVIEW_DELAY_MS = 3 * 60 * 60 * 1000;
+
+// The next slot is the missed one plus one interval, but never in the past:
+// after a pause or outage a plan resumes at its cadence instead of bursting
+// through every slot it missed.
+export const CLAIM_DUE_PLANS_SQL = `UPDATE content_plans SET
+           last_run_at=NOW(), runs_count=runs_count+1, updated_at=NOW(),
+           next_run_at = GREATEST(
+             COALESCE(next_run_at, NOW()) + make_interval(secs => 86400.0 / GREATEST(per_day, 1)),
+             NOW() + make_interval(secs => 60)
+           )
+         WHERE id IN (
+           SELECT id FROM content_plans
+           WHERE status='active' AND next_run_at <= NOW() AND (ends_at IS NULL OR ends_at > NOW())
+           ORDER BY next_run_at LIMIT 20 FOR UPDATE SKIP LOCKED
+         )
+         RETURNING *`;
+
 export function planCreditFloor(totalPosts: number, totalImages: number): number {
   return Math.max(1, totalPosts) * (RATE_COPY_PER_POST + RATE_QA_PER_POST) + Math.max(0, totalImages) * RATE_PER_IMAGE;
 }
@@ -72,6 +103,12 @@ async function getPlatformKey(platform: string, field = 'api_key'): Promise<stri
 }
 
 async function storeGeneratedImage(base64Data: string, mimeType: string): Promise<string> {
+  // Object storage first (R2 in production): a stable, platform-fetchable URL.
+  if (getMediaStorage()) {
+    try {
+      return await storeMediaBytes(Buffer.from(base64Data, 'base64'), mimeType, 'content-plan', { jpeg: true });
+    } catch (e) { logger.warn({ e: e instanceof Error ? e.message : e }, 'content_plan_storage_upload_failed'); }
+  }
   try {
     const imgbbKey = (await getPlatformKey('google', 'imgbb_api_key')) || process.env.IMGBB_API_KEY;
     if (imgbbKey) {
@@ -91,10 +128,11 @@ export async function generateFeaturedImage(prompt: string): Promise<string | nu
   const magnificKey = (await getPlatformKey('magnific', 'apiKey')) || (await getPlatformKey('freepik', 'apiKey')) || process.env.MAGNIFIC_API_KEY || process.env.FREEPIK_API_KEY;
   if (magnificKey) {
     try {
+      // Magnific links expire; the piece keeps a copy in object storage.
       const magOne = await magnificOneGenerate({ prompt, mode: 'quality', quality: 'high', resolution: '2k', aspect_ratio: '1:1' }, magnificKey);
-      if (magOne.url && !magOne.error) return magOne.url;
+      if (magOne.url && !magOne.error) return durableMediaUrl(magOne.url, 'content-plan', { jpeg: true });
       const magMystic = await magnificGenerateImage('mystic', prompt, '1:1', magnificKey);
-      if (magMystic.url && !magMystic.error) return magMystic.url;
+      if (magMystic.url && !magMystic.error) return durableMediaUrl(magMystic.url, 'content-plan', { jpeg: true });
     } catch (e) {
       logger.warn({ e: e instanceof Error ? e.message : e }, 'content_plan_magnific_image_failed');
     }
@@ -233,15 +271,18 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
         if (imageUrl) await chargeAICredits(plan.user_id, 3, 'content_plan_image', { plan_id: plan.id }).catch(() => undefined);
       }
 
-      // Scheduled (not draft) so the piece shows on the calendar; the 3-hour
-      // buffer is the review window before it goes out.
+      // Scheduled (not draft) so the piece shows on the calendar. Reviewed
+      // plans hold it 3 hours as the review window; auto-publish plans send it
+      // out at the next publisher tick after a short buffer.
+      const autoPublish = Boolean(plan.auto_publish);
       const postId = randomUUID();
-      const scheduledAt = new Date(Date.now() + 3 * 60 * 60 * 1000);
+      const scheduledAt = new Date(Date.now() + (autoPublish ? AUTO_PUBLISH_DELAY_MS : REVIEW_DELAY_MS));
       await pool.query(
         `INSERT INTO blog_posts (id, user_id, title, slug, content, excerpt, featured_image, status, scheduled_at, source, approval_status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'scheduled',$8,'content_plan','review_required')`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'scheduled',$8,'content_plan',$9)`,
         [postId, plan.user_id, title, `${slugify(title)}-${postId.slice(0, 6)}`,
-         String(piece.content || ''), String(piece.excerpt || '').slice(0, 500), imageUrl || '', scheduledAt.toISOString()]
+         String(piece.content || ''), String(piece.excerpt || '').slice(0, 500), imageUrl || '', scheduledAt.toISOString(),
+         autoPublish ? 'not_required' : 'review_required']
       );
       await pool.query(
         `UPDATE content_plan_runs SET status='done', blog_post_id=$2, title=$3, image_url=$4, error=NULL WHERE id=$1`,
@@ -250,7 +291,7 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
       await createNotification(
         plan.user_id, 'content_generated',
         `New promo content ready: ${title}`,
-        `"${plan.name}" created a post${imageUrl ? ' with a featured image' : ''}, scheduled for ${scheduledAt.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} — it's on your calendar. Review or reschedule it in Content → Posts.`,
+        `"${plan.name}" created a post${imageUrl ? ' with a featured image' : ''}, scheduled for ${scheduledAt.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} — it's on your calendar. ${autoPublish ? 'It publishes automatically; edit or unschedule it in Content → Posts before then to stop it.' : 'Review or reschedule it in Content → Posts.'}`,
         { plan_id: plan.id, blog_post_id: postId }
       );
     } catch (err) {
@@ -355,9 +396,14 @@ Respond ONLY with JSON: {"total_posts": ${totalPosts}, "posts_with_images": <int
 
   // Scheduler tick: complete expired plans (with a wrap-up notification +
   // email), then claim and run due ones. The claim atomically advances
-  // next_run_at (24h / per_day), so concurrent instances can't double-run.
+  // next_run_at by exactly 24h / per_day from the slot it was due at (not
+  // from when the tick noticed it, which drifted 20/day down to ~18), so
+  // concurrent instances can't double-run. A tick that finds the previous one
+  // still generating skips; claimed plans run a few at a time.
+  let tickRunning = false;
   async function processDueContentPlans(): Promise<void> {
-    if (!pool) return;
+    if (!pool || tickRunning) return;
+    tickRunning = true;
     try {
       const { rows: finished } = await pool.query(
         `UPDATE content_plans SET status='completed', updated_at=NOW()
@@ -384,22 +430,14 @@ Respond ONLY with JSON: {"total_posts": ${totalPosts}, "posts_with_images": <int
         }
       }
 
-      const { rows: due } = await pool.query(
-        `UPDATE content_plans SET
-           last_run_at=NOW(), runs_count=runs_count+1, updated_at=NOW(),
-           next_run_at = NOW() + make_interval(hours => GREATEST(1, (24.0 / per_day))::int)
-         WHERE id IN (
-           SELECT id FROM content_plans
-           WHERE status='active' AND next_run_at <= NOW() AND (ends_at IS NULL OR ends_at > NOW())
-           ORDER BY next_run_at LIMIT 10 FOR UPDATE SKIP LOCKED
-         )
-         RETURNING *`
-      );
-      for (const plan of due) {
-        await runPlanOnce(plan);
+      const { rows: due } = await pool.query(CLAIM_DUE_PLANS_SQL);
+      for (let i = 0; i < due.length; i += PLAN_RUN_CONCURRENCY) {
+        await Promise.all(due.slice(i, i + PLAN_RUN_CONCURRENCY).map((plan: any) => runPlanOnce(plan)));
       }
     } catch (err) {
       logger.error({ err }, 'content_plan_tick_failed');
+    } finally {
+      tickRunning = false;
     }
   }
 
@@ -433,7 +471,7 @@ export function registerContentPlanRoutes(deps: Deps & { runPlanOnce: (plan: any
   router.get('/content-plans/estimate', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
     try {
-      const perDay = Math.min(6, Math.max(1, parseInt(String(req.query.per_day ?? 3), 10) || 3));
+      const perDay = clampPerDay(req.query.per_day);
       const durationDays = Math.min(90, Math.max(1, parseInt(String(req.query.duration_days ?? 30), 10) || 30));
       const imageMode = ['always', 'never', 'auto'].includes(String(req.query.image_mode)) ? String(req.query.image_mode) : 'auto';
       const credits = estimatePlanCredits(perDay, durationDays, imageMode);
@@ -453,7 +491,7 @@ export function registerContentPlanRoutes(deps: Deps & { runPlanOnce: (plan: any
       const b = req.body as Record<string, any>;
       const name = String(b.name || '').trim();
       if (!name) return res.status(400).json({ success: false, error: 'Name is required' });
-      const perDay = Math.min(6, Math.max(1, parseInt(String(b.per_day ?? 3), 10) || 3));
+      const perDay = clampPerDay(b.per_day);
       const durationDays = Math.min(90, Math.max(1, parseInt(String(b.duration_days ?? 30), 10) || 30));
       const imageMode = ['always', 'never', 'auto'].includes(String(b.image_mode)) ? String(b.image_mode) : 'auto';
       const aiRecommended = Boolean(b.ai_recommended);
@@ -462,12 +500,12 @@ export function registerContentPlanRoutes(deps: Deps & { runPlanOnce: (plan: any
       }
 
       const { rows } = await pool.query(
-        `INSERT INTO content_plans (user_id, name, topic, tone, per_day, duration_days, use_liked_style, generate_image, image_mode, ai_recommended, custom_instructions, status, next_run_at, ends_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pricing',NULL,NULL)
+        `INSERT INTO content_plans (user_id, name, topic, tone, per_day, duration_days, use_liked_style, generate_image, image_mode, ai_recommended, custom_instructions, auto_publish, status, next_run_at, ends_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pricing',NULL,NULL)
          RETURNING *`,
         [auth.userId, name.slice(0, 120), String(b.topic || '').slice(0, 500), String(b.tone || 'engaging').slice(0, 40),
          perDay, durationDays, b.use_liked_style !== false, imageMode !== 'never', imageMode, aiRecommended,
-         String(b.custom_instructions || '').slice(0, 2000)]
+         String(b.custom_instructions || '').slice(0, 2000), b.auto_publish === true]
       );
       void deps.pricePlan(rows[0]).catch(() => undefined);
       return res.status(202).json({
@@ -514,13 +552,21 @@ export function registerContentPlanRoutes(deps: Deps & { runPlanOnce: (plan: any
   router.patch('/content-plans/:id', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
     try {
-      const status = String((req.body as any)?.status || '');
-      if (!['active', 'paused'].includes(status)) return res.status(400).json({ success: false, error: 'status must be active or paused' });
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const status = body.status === undefined ? null : String(body.status);
+      const autoPublish = typeof body.auto_publish === 'boolean' ? body.auto_publish : null;
+      if (status !== null && !['active', 'paused'].includes(status)) return res.status(400).json({ success: false, error: 'status must be active or paused' });
+      if (status === null && autoPublish === null) return res.status(400).json({ success: false, error: 'Nothing to update' });
+      // Status only moves between active and paused; a plan still being priced
+      // or already finished keeps its status.
       const { rows } = await pool.query(
-        `UPDATE content_plans SET status=$1, updated_at=NOW(),
-           next_run_at=CASE WHEN $1='active' AND next_run_at < NOW() THEN NOW() ELSE next_run_at END
+        `UPDATE content_plans SET
+           status=CASE WHEN $1::text IS NOT NULL AND status IN ('active','paused') THEN $1::text ELSE status END,
+           auto_publish=COALESCE($4::boolean, auto_publish),
+           updated_at=NOW(),
+           next_run_at=CASE WHEN $1::text='active' AND next_run_at < NOW() THEN NOW() ELSE next_run_at END
          WHERE id=$2 AND user_id=$3 RETURNING *`,
-        [status, req.params.id, auth.userId]
+        [status, req.params.id, auth.userId, autoPublish]
       );
       if (!rows.length) return res.status(404).json({ success: false, error: 'Plan not found' });
       return res.json({ success: true, plan: rows[0] });

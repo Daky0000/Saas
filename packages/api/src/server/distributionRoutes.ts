@@ -23,6 +23,7 @@ import { sanitizeTokenData, TOKEN_DATA_SECRET_KEYS } from '../token-data.ts';
 import { getRefreshMarginMs, getRefreshMode, isSoftReapprovalReason, PUBLISHING_TOKEN_PLATFORMS } from '../social-token-policy.ts';
 import { getLinkedInOAuthCredentials as credentialsImpl, postLinkedInOAuthForm, enrichLinkedInTokenData as enrichImpl } from './socialConnectRoutes.ts';
 import type { MediaModule } from './mediaRoutes.ts';
+import { durableMediaUrl, directMediaUrl, isStoredMediaUrl } from './mediaStore.ts';
 import {
   getLinkedInRestHeaders,
   parseLinkedInOrganizationId as _parseLinkedInOrganizationId,
@@ -451,8 +452,24 @@ async function resolveBlogPostFeaturedImageUrl(userId: string, post: Record<stri
   const postId = String(post?.id || '').trim();
   const rawSocialImage = String(post?.social_image || '').trim();
   const rawFeaturedImage = String(post?.featured_image || '').trim();
-  const chosen = rawSocialImage || rawFeaturedImage;
+  let chosen = rawSocialImage || rawFeaturedImage;
   if (!chosen) return '';
+
+  // Data URLs and provider links (which expire) are copied into object storage
+  // once and written back, so every later publish of this post reuses the copy.
+  // Platforms then get a direct presigned bucket URL rather than a redirect.
+  // Stored as JPEG: Instagram takes no other still format.
+  if (chosen.startsWith('data:image/') || /^https:\/\//i.test(chosen)) {
+    const stored = await durableMediaUrl(chosen, userId, { jpeg: true });
+    if (isStoredMediaUrl(stored) && stored !== chosen) {
+      if (postId && pool) {
+        const column = rawSocialImage ? 'social_image' : 'featured_image';
+        await pool.query(`UPDATE blog_posts SET ${column}=$1 WHERE id=$2 AND user_id=$3`, [stored, postId, userId]).catch(() => undefined);
+      }
+      chosen = stored;
+    }
+  }
+  if (isStoredMediaUrl(chosen)) return directMediaUrl(chosen);
 
   if (chosen.startsWith('data:image/')) {
     if (!hasDatabase() || !postId) return chosen;
