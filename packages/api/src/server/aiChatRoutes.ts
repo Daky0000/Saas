@@ -1584,13 +1584,45 @@ export function registerAIChatRoutes({
 
   // ── Credit-gated actions: Proceed / Cancel on an estimate ──────────────────
 
+  // A paid action runs as a background job, not inside the request: if the
+  // browser's connection drops, the job carries on, its progress is saved
+  // after every step, and the chat reconnects (GET the action) to follow it.
+  // A job cut short by a server restart is resumed from what was finished.
+
+  type BatchItemSnap = { index: number; topic: string; status: 'queued' | 'writing' | 'done' | 'failed'; post?: any; error?: string };
+  type ActionSnapshot =
+    | { kind: 'batch'; total: number; items: BatchItemSnap[]; credits: number; done: number; failed: number; stopped?: string; finished: boolean }
+    | { kind: 'tool'; tool: string; success?: boolean; result?: unknown; error?: string; finished: boolean };
+
+  const jobs = new Map<string, { listeners: Set<(ev: object) => void> }>();
+
+  function emitTo(actionId: string, ev: object) {
+    for (const l of jobs.get(actionId)?.listeners ?? []) { try { l(ev); } catch { /* a closed stream */ } }
+  }
+
+  async function saveSnapshot(actionId: string, snap: ActionSnapshot, status?: 'running' | 'done' | 'failed') {
+    await dbQuery(
+      `UPDATE chat_pending_actions SET result=$2, status=COALESCE($3, status), updated_at=NOW() WHERE id=$1`,
+      [actionId, JSON.stringify(snap), status ?? null],
+    ).catch((err) => logger.warn({ err, actionId }, 'chat_action_snapshot_failed'));
+  }
+
   /**
    * Writes the batch's posts two at a time. Each post is saved to the
    * calendar, charged and reported the moment it is written, so the first
    * posts are visible (and editable) while the rest are still being written.
+   * On a resume, posts already written are kept and only the rest are written.
    */
-  async function runPostBatch(userId: string, args: any, send: (data: object) => void): Promise<{ done: number; failed: number; credits: number; posts: any[] }> {
-    const items = batchPosts(args);
+  async function runPostBatch(actionId: string, userId: string, args: any, prior?: ActionSnapshot | null): Promise<void> {
+    const briefs = batchPosts(args);
+    const snap: Extract<ActionSnapshot, { kind: 'batch' }> = prior && prior.kind === 'batch' && prior.items.length === briefs.length
+      ? { ...prior, stopped: undefined, finished: false, items: prior.items.map((i) => (i.status === 'done' ? i : { ...i, status: 'queued' as const, error: undefined })) }
+      : { kind: 'batch', total: briefs.length, items: briefs.map((b, index) => ({ index, topic: b.topic, status: 'queued' as const })), credits: 0, done: 0, failed: 0, finished: false };
+    snap.failed = 0;
+    const emit = (ev: object) => emitTo(actionId, ev);
+    emit({ type: 'batch_snapshot', snapshot: snap });
+    await saveSnapshot(actionId, snap, 'running');
+
     const aiCfg = await getAIConfig();
     const key = resolveTextKey(aiCfg);
     if (!key) throw new AIUnavailableError('No AI is configured — add the free NVIDIA key in Admin → NVIDIA, or a paid key in Admin → AI Assistant.');
@@ -1603,30 +1635,29 @@ export function registerAIChatRoutes({
       UNTRUSTED_RULE,
     ].filter(Boolean).join('\n\n');
 
-    send({ type: 'batch_start', total: items.length, credits_per_post: BATCH_POST_CREDITS });
-    const posts: any[] = [];
-    let done = 0;
-    let failed = 0;
-    let credits = 0;
-    let stopped = '';
-    let next = 0;
+    const queue = snap.items.filter((i) => i.status !== 'done').map((i) => i.index);
+    const setItem = async (index: number, patch: Partial<BatchItemSnap>) => {
+      snap.items[index] = { ...snap.items[index], ...patch };
+      emit({ type: 'batch_item', ...snap.items[index], credits_used: patch.status === 'done' ? BATCH_POST_CREDITS : 0 });
+      await saveSnapshot(actionId, snap);
+    };
 
     const worker = async () => {
-      while (next < items.length && !stopped) {
-        const index = next++;
-        const item = items[index];
+      while (queue.length && !snap.stopped) {
+        const index = queue.shift()!;
+        const item = briefs[index];
         try {
           const account: any = await ensureCreditAccount(userId);
           if (Number(account?.credits ?? 0) < BATCH_POST_CREDITS || account?.spendingBlocked) {
-            stopped = 'You ran out of credits — top up to write the rest.';
-            send({ type: 'batch_item', index, status: 'failed', topic: item.topic, error: stopped });
-            failed++;
+            snap.stopped = 'You ran out of credits. Top up, then press "Write the rest" to finish.';
+            await setItem(index, { status: 'failed', error: 'Not written — out of credits' });
+            snap.failed++;
             return;
           }
-          send({ type: 'batch_item', index, status: 'writing', topic: item.topic });
+          await setItem(index, { status: 'writing' });
           const raw = await callAINonStreaming(
             aiCfg.provider, key, model, system,
-            `Post ${index + 1} of ${items.length} in a series.\nBrief: ${item.topic}\n${item.platforms.length ? `Platforms: ${item.platforms.join(', ')}. Fit the length and style to them.` : 'Platform-neutral social post.'}${tone ? `\nTone: ${tone}` : ''}\nRespond ONLY with JSON: {"title": "max 70 chars", "excerpt": "1-2 sentence hook", "content": "the full post, ready to publish"}`,
+            `Post ${index + 1} of ${briefs.length} in a series.\nBrief: ${item.topic}\n${item.platforms.length ? `Platforms: ${item.platforms.join(', ')}. Fit the length and style to them.` : 'Platform-neutral social post.'}${tone ? `\nTone: ${tone}` : ''}\nRespond ONLY with JSON: {"title": "max 70 chars", "excerpt": "1-2 sentence hook", "content": "the full post, ready to publish"}`,
             1400,
             // Usage is not billed per token here: each post is charged the flat batch rate below.
             { userId: null, feature: 'chat_batch_post', nvidiaJob: 'text', expectJson: true, skipCache: true },
@@ -1643,75 +1674,154 @@ export function registerAIChatRoutes({
             [id, userId, title, `${slugify(title) || 'post'}-${id.slice(0, 6)}`, content, String(piece.excerpt || '').slice(0, 500), item.scheduled_at],
           );
           if (item.platforms.length) await preselectPlatformsForPost(id, userId, item.platforms).catch(() => undefined);
-          await chargeAICredits(userId, BATCH_POST_CREDITS, 'chat_batch_post', { post_id: id });
-          credits += BATCH_POST_CREDITS;
-          done++;
-          const post = { ...(rows as any[])[0], content: content.slice(0, 600) };
-          posts.push(post);
-          send({ type: 'batch_item', index, status: 'done', topic: item.topic, post, credits_used: BATCH_POST_CREDITS });
+          await chargeAICredits(userId, BATCH_POST_CREDITS, 'chat_batch_post', { post_id: id, action_id: actionId });
+          snap.credits += BATCH_POST_CREDITS;
+          snap.done++;
+          await setItem(index, { status: 'done', post: { ...(rows as any[])[0], content: content.slice(0, 600) }, error: undefined });
         } catch (err) {
-          failed++;
+          snap.failed++;
           logger.warn({ err: aiErrorDetail(err), userId, index }, 'chat_batch_post_failed');
-          send({ type: 'batch_item', index, status: 'failed', topic: item.topic, error: err instanceof AIUnavailableError ? err.message : 'This post could not be written — no credits were charged for it.' });
+          await setItem(index, { status: 'failed', error: err instanceof AIUnavailableError ? 'The AI was busy — not charged. Press "Write the rest" to try again.' : 'Could not be written — not charged. Press "Write the rest" to try again.' });
         }
       }
     };
     await Promise.all([worker(), worker()]);
-    if (done) {
+    // Anything still queued (the run stopped early) counts as not written.
+    for (const i of snap.items) if (i.status === 'queued' || i.status === 'writing') { i.status = 'failed'; i.error = i.error || 'Not written'; snap.failed++; }
+    snap.finished = true;
+    if (snap.done) {
       await checkTaskActions(userId, 'create_post').catch(() => undefined);
       await checkTaskActions(userId, 'schedule_post').catch(() => undefined);
-      createNotification(userId, 'post_scheduled', 'Posts scheduled', `${done} post${done === 1 ? '' : 's'} written and added to your calendar.`, {}).catch(() => undefined);
+      createNotification(userId, 'post_scheduled', 'Posts scheduled', `${snap.done} of ${snap.total} posts written and added to your calendar.`, {}).catch(() => undefined);
     }
-    send({ type: 'batch_done', done, failed, credits_used: credits, stopped: stopped || undefined });
-    return { done, failed, credits, posts };
+    await saveSnapshot(actionId, snap, snap.done ? 'done' : 'failed');
+    emit({ type: 'batch_done', snapshot: snap, done: snap.done, failed: snap.failed, credits_used: snap.credits, stopped: snap.stopped });
+  }
+
+  async function runToolAction(actionId: string, userId: string, tool: string, args: any): Promise<void> {
+    const emit = (ev: object) => emitTo(actionId, ev);
+    emit({ type: 'status', text: aiToolLabelPlain(tool, args).replace(/…$/, '') });
+    emit({ type: 'tool_start', name: tool, label: aiToolLabelPlain(tool, args) });
+    await saveSnapshot(actionId, { kind: 'tool', tool, finished: false }, 'running');
+    let snap: ActionSnapshot;
+    try {
+      const result: any = await executeAITool(tool, args, userId);
+      const ok = result?.success !== false;
+      snap = ok ? { kind: 'tool', tool, success: true, result, finished: true } : { kind: 'tool', tool, success: false, error: String(result?.error || 'Action failed — nothing was charged.'), finished: true };
+    } catch (err) {
+      logger.warn({ err: aiErrorDetail(err), tool }, 'chat_tool_action_failed');
+      snap = { kind: 'tool', tool, success: false, error: err instanceof AIUnavailableError ? err.message : 'This could not be finished — nothing was charged.', finished: true };
+    }
+    await saveSnapshot(actionId, snap, snap.success ? 'done' : 'failed');
+    emit(snap.success ? { type: 'tool_done', name: tool, success: true, result: snap.result } : { type: 'tool_done', name: tool, success: false, error: snap.error });
+  }
+
+  /** Starts the job in the background (once per action) and returns at once. */
+  function startJob(action: { id: string; tool: string; args: any }, userId: string, prior?: ActionSnapshot | null) {
+    if (jobs.has(action.id)) return;
+    jobs.set(action.id, { listeners: new Set() });
+    const run = action.tool === 'create_posts_batch'
+      ? runPostBatch(action.id, userId, action.args, prior)
+      : runToolAction(action.id, userId, action.tool, action.args);
+    void run
+      .catch(async (err) => {
+        logger.error({ err, detail: aiErrorDetail(err), tool: action.tool }, 'chat_action_failed');
+        await finishPendingAction(dbQuery, action.id, 'failed', { kind: 'tool', tool: action.tool, success: false, error: err instanceof AIUnavailableError ? err.message : 'This could not be finished.', finished: true });
+        emitTo(action.id, { type: 'job_error', error: err instanceof AIUnavailableError ? err.message : 'This could not be finished.' });
+      })
+      .finally(() => {
+        emitTo(action.id, { type: 'job_end' });
+        jobs.delete(action.id);
+      });
+  }
+
+  /** Streams a running job's events to this response until it ends; a dropped connection does not stop the job. */
+  function followJob(res: Response, actionId: string) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+    const write = (line: string) => { if (!res.writableEnded) res.write(line); };
+    const heartbeat = setInterval(() => write(': ping\n\n'), 15_000);
+    const listener = (ev: any) => {
+      if (ev?.type === 'job_end') {
+        write(`data: ${JSON.stringify({ type: 'credits_changed' })}\n\n`);
+        write('data: [DONE]\n\n');
+        if (!res.writableEnded) res.end();
+        return;
+      }
+      write(`data: ${JSON.stringify(ev)}\n\n`);
+    };
+    const job = jobs.get(actionId);
+    if (!job) { write('data: [DONE]\n\n'); res.end(); clearInterval(heartbeat); return; }
+    job.listeners.add(listener);
+    res.on('close', () => { clearInterval(heartbeat); job.listeners.delete(listener); });
+  }
+
+  async function loadAction(userId: string, id: string) {
+    await ensureChatTables(dbQuery);
+    const { rows } = await dbQuery(
+      `SELECT id, tool, args, credits, label, status, result, updated_at FROM chat_pending_actions WHERE id=$1 AND user_id=$2`,
+      [id, userId],
+    );
+    return (rows as any[])[0] ?? null;
   }
 
   router.post('/ai/chat/actions/:id/run', aiChatLimiter, async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     const action = await claimPendingAction(dbQuery, auth.userId, String(req.params.id)).catch(() => null);
-    if (!action) return res.status(409).json({ success: false, error: 'This action already ran, was cancelled or has expired. Ask again to get a fresh estimate.' });
+    if (!action) {
+      // Already started (e.g. a second tab, or a click after a reconnect): follow it instead.
+      const existing = await loadAction(auth.userId, String(req.params.id)).catch(() => null);
+      if (existing && jobs.has(existing.id)) return followJob(res, existing.id);
+      return res.status(409).json({ success: false, code: 'not_pending', status: existing?.status ?? 'missing', error: existing ? 'This was already started — showing its progress.' : 'This estimate has expired. Ask again for a fresh one.' });
+    }
     const account: any = await ensureCreditAccount(auth.userId).catch(() => null);
     const balance = Number(account?.credits ?? 0);
     // A batch can do part of the job on a smaller balance; a single generation needs the full amount.
     const needed = action.tool === 'create_posts_batch' ? BATCH_POST_CREDITS : action.credits;
     if (balance < needed || account?.spendingBlocked) {
-      await finishPendingAction(dbQuery, action.id, 'failed', { error: 'insufficient_credits' });
-      return res.status(402).json({ success: false, error: `This needs ${action.credits} credits and you have ${balance}. Top up and ask again.` });
+      // Back to pending: the same card works again after a top-up.
+      await dbQuery(`UPDATE chat_pending_actions SET status='pending', updated_at=NOW() WHERE id=$1`, [action.id]).catch(() => undefined);
+      return res.status(402).json({ success: false, code: 'insufficient_credits', needed: action.credits, balance, error: `This needs ${action.credits} credits and you have ${balance}. Top up, then press Proceed again.` });
     }
+    startJob(action, auth.userId);
+    followJob(res, action.id);
+  });
 
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.flushHeaders?.();
-    const send = (data: object) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`); };
-    const heartbeat = setInterval(() => { if (!res.writableEnded) res.write(': ping\n\n'); }, 15_000);
-    res.on('close', () => clearInterval(heartbeat));
+  /** Where an action stands — the chat polls this after a dropped connection or a reload. */
+  router.get('/ai/chat/actions/:id', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const a = await loadAction(auth.userId, String(req.params.id)).catch(() => null);
+    if (!a) return res.status(404).json({ success: false, error: 'Not found' });
+    const live = jobs.has(a.id);
+    // Running, but no job here and no progress for 2 minutes: the server restarted mid-way.
+    const interrupted = a.status === 'running' && !live && Date.now() - new Date(a.updated_at).getTime() > 120_000;
+    res.json({ success: true, action: { id: a.id, tool: a.tool, label: a.label, credits: a.credits, status: interrupted ? 'interrupted' : a.status, live, snapshot: a.result ?? null } });
+  });
 
-    try {
-      if (action.tool === 'create_posts_batch') {
-        const result = await runPostBatch(auth.userId, action.args, send);
-        await finishPendingAction(dbQuery, action.id, result.done ? 'done' : 'failed', { done: result.done, failed: result.failed, credits: result.credits });
-      } else {
-        send({ type: 'status', text: aiToolLabelPlain(action.tool, action.args).replace(/…$/, '') });
-        send({ type: 'tool_start', name: action.tool, label: aiToolLabelPlain(action.tool, action.args) });
-        const result: any = await executeAITool(action.tool, action.args, auth.userId);
-        const ok = result?.success !== false;
-        send(ok ? { type: 'tool_done', name: action.tool, success: true, result } : { type: 'tool_done', name: action.tool, success: false, error: String(result?.error || 'Action failed') });
-        await finishPendingAction(dbQuery, action.id, ok ? 'done' : 'failed', ok ? { credits_used: result?.credits_used } : { error: result?.error });
-      }
-      send({ type: 'credits_changed' });
-      res.write('data: [DONE]\n\n');
-      res.end();
-    } catch (err) {
-      logger.error({ err, detail: aiErrorDetail(err), tool: action.tool }, 'chat_action_failed');
-      await finishPendingAction(dbQuery, action.id, 'failed', { error: aiErrorDetail(err) });
-      if (!res.writableEnded) {
-        res.write(`data: ${JSON.stringify({ type: 'error', error: aiErrorFor(err, auth.role), retryable: false })}\n\n`);
-        res.end();
-      }
+  /** Finishes what an interrupted or partly failed action did not: only the missing posts are written (and charged). */
+  router.post('/ai/chat/actions/:id/resume', aiChatLimiter, async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const a = await loadAction(auth.userId, String(req.params.id)).catch(() => null);
+    if (!a) return res.status(404).json({ success: false, error: 'Not found' });
+    if (jobs.has(a.id)) return followJob(res, a.id);
+    const snap = a.result as ActionSnapshot | null;
+    const resumable = a.status === 'failed' || a.status === 'running'
+      || (a.status === 'done' && snap?.kind === 'batch' && snap.failed > 0);
+    if (!resumable) return res.status(409).json({ success: false, code: 'not_resumable', error: 'There is nothing left to finish here.' });
+    const account: any = await ensureCreditAccount(auth.userId).catch(() => null);
+    const needed = a.tool === 'create_posts_batch' ? BATCH_POST_CREDITS : a.credits;
+    if (Number(account?.credits ?? 0) < needed || account?.spendingBlocked) {
+      return res.status(402).json({ success: false, code: 'insufficient_credits', needed, balance: Number(account?.credits ?? 0), error: `You need at least ${needed} credits to continue. Top up, then try again.` });
     }
+    await dbQuery(`UPDATE chat_pending_actions SET status='running', updated_at=NOW() WHERE id=$1`, [a.id]);
+    startJob({ id: a.id, tool: a.tool, args: a.args }, auth.userId, snap);
+    followJob(res, a.id);
   });
 
   router.post('/ai/chat/actions/:id/cancel', async (req: Request, res: Response) => {

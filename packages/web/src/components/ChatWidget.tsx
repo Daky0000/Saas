@@ -36,6 +36,16 @@ type TextMessage = {
   raw?: string;
   /** The reply failed; the bubble shows the error and a Retry button. */
   failed?: boolean;
+  /** What happens next, in plain words (shown under a failed reply). */
+  hint?: string;
+  /** When set, the reply is sent again automatically at this time (ms). */
+  autoRetryAt?: number;
+  /** Sent again automatically when the browser is back online. */
+  waitOnline?: boolean;
+  /** Which try this was (0 = first). Caps the automatic retries. */
+  attempt?: number;
+  /** A link that fixes the problem, e.g. top up credits. */
+  fix?: { label: string; href: string };
 };
 /** What the assistant is doing this turn: steps, thinking, posts made. */
 type ActivityMessage = {
@@ -104,8 +114,12 @@ type EstimateMessage = {
   credits: number;
   lines: string[];
   balance: number | null;
-  status: 'pending' | 'running' | 'done' | 'cancelled' | 'failed';
+  status: 'pending' | 'running' | 'done' | 'cancelled' | 'failed' | 'interrupted';
   error?: string;
+  /** Live connection note while the job runs on the server (reconnecting, offline…). */
+  banner?: string;
+  /** Not enough credits to start: show the top-up link; the card stays usable. */
+  needsCredits?: boolean;
 };
 type BatchItem = { index: number; topic: string; status: 'queued' | 'writing' | 'done' | 'failed'; post?: any; error?: string };
 /** Posts being written one by one; each lands on the calendar as soon as it is done. */
@@ -117,6 +131,7 @@ type BatchMessage = {
   creditsUsed: number;
   status: 'running' | 'done';
   stopped?: string;
+  banner?: string;
 };
 type Message = TextMessage | ToolMessage | FormMessage | SchedulerMessage | PlanMessage | ActivityMessage | EstimateMessage | BatchMessage;
 type SessionMeta = { id: string; title: string; updated_at: string };
@@ -745,8 +760,8 @@ function ActivityCard({ msg }: { msg: ActivityMessage }) {
   );
 }
 
-function EstimateCard({ msg, busy, onProceed, onCancel }: { msg: EstimateMessage; busy: boolean; onProceed: () => void; onCancel: () => void }) {
-  const short = msg.balance !== null && msg.balance < msg.credits;
+function EstimateCard({ msg, busy, onProceed, onCancel, onResume }: { msg: EstimateMessage; busy: boolean; onProceed: () => void; onCancel: () => void; onResume: () => void }) {
+  const short = msg.needsCredits || (msg.balance !== null && msg.balance < msg.credits);
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2.5 text-xs">
       <div className="flex items-start justify-between gap-2">
@@ -764,23 +779,37 @@ function EstimateCard({ msg, busy, onProceed, onCancel }: { msg: EstimateMessage
           Balance {msg.balance} → {Math.max(0, msg.balance - msg.credits)} after this{short ? ' — not enough credits to finish' : ''}
         </p>
       )}
+      {msg.banner && <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-amber-700"><Loader2 size={11} className="animate-spin" />{msg.banner}</p>}
       {msg.status === 'pending' ? (
-        <div className="mt-2 flex gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2">
           <button type="button" disabled={busy} onClick={onProceed}
             className="rounded-lg bg-indigo-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">Proceed</button>
           <button type="button" disabled={busy} onClick={onCancel}
             className="rounded-lg bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-50">Cancel</button>
+          {short && <a href="/credits" className="text-[11px] font-semibold text-indigo-600 hover:underline">Top up credits →</a>}
         </div>
+      ) : msg.status === 'running' ? (
+        <p className="mt-1.5 text-[11px] font-medium text-indigo-700">Running — it keeps going even if you close the chat or lose connection.</p>
+      ) : msg.status === 'done' ? (
+        <p className="mt-1.5 text-[11px] font-medium text-emerald-700">✓ Approved and run</p>
+      ) : msg.status === 'cancelled' ? (
+        <p className="mt-1.5 text-[11px] text-slate-500">Cancelled — nothing was charged. Tell me what to change and I'll price it again.</p>
       ) : (
-        <p className={`mt-1.5 text-[11px] font-medium ${msg.status === 'failed' ? 'text-red-600' : msg.status === 'cancelled' ? 'text-slate-400' : 'text-emerald-700'}`}>
-          {msg.status === 'running' ? 'Running…' : msg.status === 'done' ? '✓ Approved' : msg.status === 'cancelled' ? 'Cancelled — nothing was charged' : msg.error || 'Failed'}
-        </p>
+        <div className="mt-1.5 space-y-1.5">
+          <p className="text-[11px] font-medium text-red-600">
+            {msg.status === 'interrupted' ? 'Stopped part-way when the server restarted. What was finished is saved and charged; the rest was not.' : msg.error || 'This did not finish — nothing more was charged.'}
+          </p>
+          <button type="button" disabled={busy} onClick={onResume}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+            <RotateCcw size={11} /> {msg.status === 'interrupted' ? 'Finish the rest' : 'Try again'}
+          </button>
+        </div>
       )}
     </div>
   );
 }
 
-function BatchCard({ msg }: { msg: BatchMessage }) {
+function BatchCard({ msg, busy, onResume }: { msg: BatchMessage; busy: boolean; onResume: () => void }) {
   const [openIdx, setOpenIdx] = useState<number | null>(null);
   const done = msg.items.filter((i) => i.status === 'done').length;
   const failed = msg.items.filter((i) => i.status === 'failed').length;
@@ -796,6 +825,10 @@ function BatchCard({ msg }: { msg: BatchMessage }) {
         <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
           <div className="h-full rounded-full bg-indigo-500 transition-all duration-500" style={{ width: `${msg.total ? ((done + failed) / msg.total) * 100 : 0}%` }} />
         </div>
+        {msg.banner && <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-amber-700"><Loader2 size={11} className="shrink-0 animate-spin" />{msg.banner}</p>}
+        {msg.status === 'running' && !msg.banner && (
+          <p className="mt-1 text-[10.5px] text-slate-400">Each post goes on your calendar the moment it's written. You can close the chat — this keeps going.</p>
+        )}
         {msg.stopped && <p className="mt-1 text-[11px] text-red-600">{msg.stopped}</p>}
       </div>
       <ul className="max-h-64 divide-y divide-slate-100 overflow-y-auto">
@@ -823,13 +856,101 @@ function BatchCard({ msg }: { msg: BatchMessage }) {
           </li>
         ))}
       </ul>
-      {done > 0 && (
-        <div className="border-t border-slate-100 px-3 py-1.5 text-right">
-          <a href="/posts" className="text-[11px] font-semibold text-indigo-600 hover:underline">Open in Posts →</a>
+      {msg.status === 'done' && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-3 py-2">
+          <span className="text-[11px] text-slate-500">
+            {failed === 0 ? `All ${done} posts are scheduled — review or edit them any time before they publish.` : `${done} scheduled, ${failed} not written (not charged).`}
+          </span>
+          <span className="flex items-center gap-2">
+            {failed > 0 && (
+              <button type="button" disabled={busy} onClick={onResume}
+                className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+                <RotateCcw size={11} /> Write the rest ({failed})
+              </button>
+            )}
+            {msg.stopped && <a href="/credits" className="text-[11px] font-semibold text-indigo-600 hover:underline">Top up</a>}
+            {done > 0 && <a href="/posts" className="text-[11px] font-semibold text-indigo-600 hover:underline">Open in Posts →</a>}
+          </span>
         </div>
       )}
     </div>
   );
+}
+
+/** A failed reply: what happened, what happens next, and the one button that fixes it. */
+function FailedReply({ msg, busy, onRetry, onStopAuto }: { msg: TextMessage; busy: boolean; onRetry: () => void; onStopAuto: () => void }) {
+  const [now, setNow] = useState(Date.now());
+  const fired = useRef(false);
+  useEffect(() => {
+    if (!msg.autoRetryAt) return;
+    const t = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, [msg.autoRetryAt]);
+  useEffect(() => {
+    if (fired.current || busy || !msg.autoRetryAt || now < msg.autoRetryAt) return;
+    fired.current = true;
+    onRetry();
+  }, [now, msg.autoRetryAt, busy, onRetry]);
+  useEffect(() => {
+    if (!msg.waitOnline) return;
+    const back = () => { if (!fired.current) { fired.current = true; onRetry(); } };
+    window.addEventListener('online', back);
+    return () => window.removeEventListener('online', back);
+  }, [msg.waitOnline, onRetry]);
+
+  const secs = msg.autoRetryAt ? Math.max(0, Math.ceil((msg.autoRetryAt - now) / 1000)) : 0;
+  return (
+    <div className="flex justify-start gap-1.5">
+      <SparkleAvatar size={22} />
+      <div className="max-w-[80%] space-y-1.5 rounded-2xl rounded-bl-sm border border-red-100 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-700">
+        <p className="font-medium">{msg.content}</p>
+        {msg.hint && <p className="text-[11px] text-red-600/90">{msg.hint}</p>}
+        {msg.autoRetryAt && (
+          <p className="flex items-center gap-1.5 text-[11px] text-slate-600"><Loader2 size={11} className="animate-spin" />Trying again automatically in {secs}s…</p>
+        )}
+        {msg.waitOnline && (
+          <p className="flex items-center gap-1.5 text-[11px] text-slate-600"><Loader2 size={11} className="animate-spin" />Waiting for your connection — I'll send it the moment you're back online.</p>
+        )}
+        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+          {msg.fix ? (
+            <a href={msg.fix.href} className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700">{msg.fix.label}</a>
+          ) : null}
+          <button type="button" disabled={busy} onClick={() => { fired.current = true; onRetry(); }}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1 text-[11px] font-semibold text-red-700 shadow-sm ring-1 ring-red-200 hover:bg-red-100 disabled:opacity-50">
+            <RotateCcw size={11} /> {msg.autoRetryAt || msg.waitOnline ? 'Retry now' : 'Retry'}
+          </button>
+          {(msg.autoRetryAt || msg.waitOnline) && (
+            <button type="button" onClick={() => { fired.current = true; onStopAuto(); }} className="text-[11px] text-slate-500 underline hover:text-slate-700">Don't retry</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Turns a failure into plain words, a next step, and whether to retry on its own. */
+function describeFailure(err: any, attempt: number): Pick<TextMessage, 'content' | 'hint' | 'autoRetryAt' | 'waitOnline' | 'fix'> {
+  const raw = String(err?.message || '');
+  const status: number | undefined = err?.status;
+  const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+  const network = !status && (err instanceof TypeError || /network|failed to fetch|load failed|dropped|connection|ERR_/i.test(raw));
+  if (offline) {
+    return { content: "You're offline.", hint: 'Anything already started is still running on the server and is saved.', waitOnline: true };
+  }
+  if (status === 402 || /out of (ai )?credits|not enough credits|insufficient/i.test(raw)) {
+    return { content: raw || "You're out of credits.", hint: 'Top up, then press Retry — your message is kept.', fix: { label: 'Top up credits', href: '/credits' } };
+  }
+  if (status === 429 || /rate limit|too many/i.test(raw)) {
+    return { content: "You're sending messages faster than I can take them.", hint: 'I\'ll send this one again in a moment.', autoRetryAt: Date.now() + 20_000 };
+  }
+  if (network) {
+    return attempt < 2
+      ? { content: 'The connection dropped before my reply finished.', hint: "Anything already created is saved, and trying again won't make duplicates.", autoRetryAt: Date.now() + 4_000 }
+      : { content: 'The connection keeps dropping.', hint: "Check your internet, then press Retry. Anything already created is saved, and trying again won't make duplicates." };
+  }
+  return attempt < 1
+    ? { content: raw || 'Something went wrong.', hint: 'The AI models are busy right now.', autoRetryAt: Date.now() + 20_000 }
+    : { content: raw || 'Something went wrong.', hint: 'Still busy. Press Retry in a minute, or try a shorter request.' };
 }
 
 function ToolCard({ msg }: { msg: ToolMessage }) {
@@ -1085,7 +1206,7 @@ export default function ChatWidget() {
 
   // ── Send ──────────────────────────────────────────────────────────────────
 
-  const send = useCallback(async (textOverride?: string, imgsOverride?: AttachedImg[], base?: Message[]) => {
+  const send = useCallback(async (textOverride?: string, imgsOverride?: AttachedImg[], base?: Message[], attempt = 0) => {
     const rawText = (textOverride ?? input).trim();
     const imgs = imgsOverride ?? attachedImages;
     // A retry sends from the conversation as it was before the failed turn.
@@ -1197,7 +1318,9 @@ export default function ChatWidget() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error((data as any)?.error || 'Request failed');
+        const e: any = new Error((data as any)?.error || 'Request failed');
+        e.status = res.status;
+        throw e;
       }
 
       const reader = res.body!.getReader();
@@ -1266,14 +1389,13 @@ export default function ChatWidget() {
           }
         }
       }
-      if (!finished) throw new Error('The connection dropped before the reply finished.');
+      if (!finished) throw new TypeError('The connection dropped before the reply finished.');
       updateActivity((a) => ({ ...a, status: 'done', endedAt: Date.now() }));
     } catch (err: any) {
       if (err?.name === 'AbortError') { updateActivity((a) => (a.status === 'working' ? { ...a, status: 'done', endedAt: Date.now() } : a)); return; }
       updateActivity((a) => ({ ...a, status: 'failed', endedAt: Date.now() }));
-      const message = err?.message === 'Failed to fetch' ? 'Could not reach the server.' : err?.message || 'Something went wrong.';
       setMessages((prev) => {
-        const failed: TextMessage = { kind: 'text', id: assistantId, role: 'assistant', content: message, failed: true };
+        const failed: TextMessage = { kind: 'text', id: assistantId, role: 'assistant', failed: true, attempt, ...describeFailure(err, attempt) };
         return prev.some((m) => m.id === assistantId)
           ? prev.map((m) => (m.id === assistantId && m.kind === 'text' ? failed : m))
           : [...prev, failed];
@@ -1320,8 +1442,14 @@ export default function ChatWidget() {
     while (u >= 0 && !(messages[u].kind === 'text' && (messages[u] as TextMessage).role === 'user')) u--;
     if (u < 0) return;
     const original = messages[u] as TextMessage;
-    void send(original.raw ?? original.content, original.images ?? [], messages.slice(0, u));
+    const failed = messages[idx] as TextMessage;
+    void send(original.raw ?? original.content, original.images ?? [], messages.slice(0, u), (failed?.attempt ?? 0) + 1);
   }, [loading, messages, send]);
+
+  const stopAutoRetry = useCallback((failedId: string) => {
+    setMessages((prev) => prev.map((m) => (m.id === failedId && m.kind === 'text'
+      ? { ...m, autoRetryAt: undefined, waitOnline: false, hint: 'Press Retry when you are ready — your message is kept.' } : m)));
+  }, [setMessages]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
@@ -1396,65 +1524,144 @@ export default function ChatWidget() {
 
   // ── Credit estimates: Proceed runs the parked action, Cancel drops it ───────
 
-  const runAction = useCallback(async (estimateId: string) => {
-    const est = messages.find((m): m is EstimateMessage => m.id === estimateId && m.kind === 'estimate');
-    if (!est || est.status !== 'pending' || loading) return;
-    const sid = activeId;
+  /**
+   * Runs (or resumes, or just follows) a paid action and keeps its cards up to
+   * date. The job lives on the server: if the stream drops, this says so,
+   * reconnects by polling, and picks up the progress — it never leaves the
+   * card silent.
+   */
+  const driveAction = useCallback(async (sid: string, actionId: string, mode: 'run' | 'resume' | 'follow') => {
     const setMessages = setMessagesFor(sid);
     const setLoading = setLoadingFor(sid);
+    const estimateId = `estimate-${actionId}`;
+    const batchId = `batch-${actionId}`;
     const patchEstimate = (patch: Partial<EstimateMessage>) =>
       setMessages((prev) => prev.map((m) => (m.id === estimateId && m.kind === 'estimate' ? { ...m, ...patch } : m)));
-    const batchId = `batch-${est.actionId}`;
     const patchBatch = (fn: (b: BatchMessage) => BatchMessage) =>
       setMessages((prev) => prev.map((m) => (m.id === batchId && m.kind === 'batch' ? fn(m) : m)));
-
-    patchEstimate({ status: 'running' });
-    setLoading(true);
-    try {
-      const res = await fetch(`${getApiBaseUrl()}/api/ai/chat/actions/${encodeURIComponent(est.actionId)}/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('auth_token')}` },
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error((data as any)?.error || 'Could not start this action');
+    const setBanner = (banner?: string) => { patchEstimate({ banner }); patchBatch((b) => ({ ...b, banner })); };
+    const applySnapshot = (snap: any) => {
+      if (!snap) return;
+      if (snap.kind === 'batch') {
+        const batch: BatchMessage = {
+          kind: 'batch', id: batchId, total: Number(snap.total) || 0, items: Array.isArray(snap.items) ? snap.items : [],
+          creditsUsed: Number(snap.credits) || 0, status: snap.finished ? 'done' : 'running', stopped: snap.stopped,
+        };
+        setMessages((prev) => (prev.some((m) => m.id === batchId)
+          ? prev.map((m) => (m.id === batchId && m.kind === 'batch' ? { ...batch, banner: m.banner } : m))
+          : [...prev, batch]));
+      } else if (snap.kind === 'tool' && snap.finished) {
+        const toolId = `tool-${actionId}`;
+        const tool: ToolMessage = { kind: 'tool', id: toolId, name: snap.tool, label: '', status: snap.success ? 'done' : 'error', result: snap.result, error: snap.error };
+        setMessages((prev) => (prev.some((m) => m.id === toolId) ? prev.map((m) => (m.id === toolId ? tool : m)) : [...prev.filter((m) => !(m.kind === 'tool' && m.name === snap.tool && m.status === 'running')), tool]));
       }
-      const finished = await readEventStream(res, (ev) => {
-        if (ev.type === 'batch_start') {
-          const total = Number(ev.total) || 0;
-          setMessages((prev) => [...prev, {
-            kind: 'batch', id: batchId, total, creditsUsed: 0, status: 'running',
-            items: Array.from({ length: total }, (_, index) => ({ index, topic: '', status: 'queued' as const })),
-          } satisfies BatchMessage]);
-        } else if (ev.type === 'batch_item') {
-          patchBatch((b) => ({
-            ...b,
-            creditsUsed: b.creditsUsed + (ev.status === 'done' ? Number(ev.credits_used) || 0 : 0),
-            items: b.items.map((it) => (it.index === ev.index ? { ...it, topic: ev.topic || it.topic, status: ev.status, post: ev.post ?? it.post, error: ev.error } : it)),
-          }));
-          // Each post is charged as it is saved: the header balance follows along.
-          if (ev.status === 'done') notifyCreditsChanged();
-        } else if (ev.type === 'batch_done') {
-          patchBatch((b) => ({ ...b, status: 'done', stopped: ev.stopped }));
-        } else if (ev.type === 'tool_start') {
-          setMessages((prev) => [...prev, { kind: 'tool', id: `tool-${ev.name}-${Date.now()}`, name: ev.name, label: ev.label, status: 'running' } satisfies ToolMessage]);
-        } else if (ev.type === 'tool_done') {
-          setMessages((prev) => prev.map((m) => (m.kind === 'tool' && m.name === ev.name && m.status === 'running'
-            ? { ...m, status: ev.success ? 'done' : 'error', result: ev.result, error: ev.error } : m)));
-        } else if (ev.type === 'credits_changed') {
-          notifyCreditsChanged();
+    };
+    const handle = (ev: any) => {
+      if (ev.type === 'batch_snapshot' || ev.type === 'batch_done') {
+        applySnapshot(ev.snapshot);
+        if (ev.type === 'batch_done') notifyCreditsChanged();
+      } else if (ev.type === 'batch_item') {
+        setMessages((prev) => (prev.some((m) => m.id === batchId) ? prev : [...prev, { kind: 'batch', id: batchId, total: 0, items: [], creditsUsed: 0, status: 'running' } satisfies BatchMessage]));
+        patchBatch((b) => {
+          const items = [...b.items];
+          items[ev.index] = { index: ev.index, topic: ev.topic, status: ev.status, post: ev.post, error: ev.error };
+          return { ...b, total: Math.max(b.total, items.length), items, creditsUsed: b.creditsUsed + (Number(ev.credits_used) || 0) };
+        });
+        // Each post is charged as it is saved: the header balance follows along.
+        if (ev.status === 'done') notifyCreditsChanged();
+      } else if (ev.type === 'tool_start') {
+        setMessages((prev) => (prev.some((m) => m.id === `tool-${actionId}`) ? prev
+          : [...prev, { kind: 'tool', id: `tool-${actionId}`, name: ev.name, label: ev.label, status: 'running' } satisfies ToolMessage]));
+      } else if (ev.type === 'tool_done') {
+        applySnapshot({ kind: 'tool', tool: ev.name, success: ev.success, result: ev.result, error: ev.error, finished: true });
+      } else if (ev.type === 'job_error') {
+        patchEstimate({ status: 'failed', error: ev.error });
+      } else if (ev.type === 'credits_changed') {
+        notifyCreditsChanged();
+      }
+    };
+    /** Reads where the action stands and sets the final card states. True when it is over. */
+    const settle = async (): Promise<boolean> => {
+      const r = await fetch(`${getApiBaseUrl()}/api/ai/chat/actions/${encodeURIComponent(actionId)}`, { headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` } });
+      if (!r.ok) throw new TypeError('status check failed');
+      const a = (await r.json())?.action;
+      if (!a) return true;
+      applySnapshot(a.snapshot);
+      if (a.status === 'pending') { patchEstimate({ status: 'pending', banner: undefined }); return true; }
+      if (a.status === 'cancelled') { patchEstimate({ status: 'cancelled', banner: undefined }); return true; }
+      if (a.status === 'interrupted') { setBanner(undefined); patchEstimate({ status: 'interrupted' }); patchBatch((b) => ({ ...b, status: 'done' })); return true; }
+      if (a.status === 'done') { setBanner(undefined); patchEstimate({ status: 'done' }); return true; }
+      if (a.status === 'failed') {
+        setBanner(undefined);
+        const snap = a.snapshot;
+        patchEstimate({ status: 'failed', error: snap?.kind === 'tool' ? snap.error : snap?.stopped || 'None of it could be finished — nothing was charged.' });
+        return true;
+      }
+      patchEstimate({ status: 'running' });
+      return false;
+    };
+
+    setLoading(true);
+    patchEstimate({ status: 'running', error: undefined, needsCredits: false, banner: mode === 'follow' ? 'Checking progress…' : undefined });
+    if (mode === 'resume') patchBatch((b) => ({ ...b, status: 'running', stopped: undefined }));
+    let follow = mode === 'follow';
+    try {
+      if (!follow) {
+        try {
+          const res = await fetch(`${getApiBaseUrl()}/api/ai/chat/actions/${encodeURIComponent(actionId)}/${mode}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('auth_token')}` },
+          });
+          if (res.status === 402) {
+            const d = await res.json().catch(() => ({}));
+            patchEstimate({ status: mode === 'run' ? 'pending' : 'failed', needsCredits: true, error: d?.error, balance: typeof d?.balance === 'number' ? d.balance : null });
+            if (mode === 'resume') patchBatch((b) => ({ ...b, status: 'done', stopped: d?.error }));
+            return;
+          }
+          if (res.status === 409) {
+            follow = true;
+          } else if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            const e: any = new Error(d?.error || 'Could not start this');
+            e.status = res.status;
+            throw e;
+          } else {
+            await readEventStream(res, handle);
+          }
+        } catch (err: any) {
+          // Only a lost connection is followed up; anything else is a real failure.
+          if (err?.status || !(err instanceof TypeError || /network|fetch|load failed|dropped/i.test(String(err?.message)))) throw err;
         }
-      });
-      if (!finished) throw new Error('The connection dropped — check Posts for what was already made.');
-      patchEstimate({ status: 'done' });
+      }
+      // Settle from the server's record; poll while it is still running.
+      for (let tries = 0; ; tries++) {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          setBanner("You're offline. The work carries on on the server — I'll catch up when you're back online.");
+          await new Promise<void>((resolve) => window.addEventListener('online', () => resolve(), { once: true }));
+        }
+        try {
+          if (await settle()) break;
+          setBanner(tries === 0 && !follow ? undefined : 'Connection dropped — still working on the server. Following along…');
+        } catch {
+          setBanner('Connection dropped — the work continues on the server. Reconnecting…');
+        }
+        await new Promise((r) => setTimeout(r, Math.min(3000 + tries * 500, 8000)));
+      }
     } catch (err: any) {
-      patchEstimate({ status: 'failed', error: err?.message || 'Failed' });
+      setBanner(undefined);
+      patchEstimate({ status: 'failed', error: err?.message || 'This could not be started — nothing was charged.' });
       patchBatch((b) => ({ ...b, status: 'done' }));
     } finally {
       setLoading(false);
       notifyCreditsChanged();
     }
-  }, [messages, loading, activeId, setMessagesFor, setLoadingFor]);
+  }, [setMessagesFor, setLoadingFor]);
+
+  const runAction = useCallback((estimateId: string, mode: 'run' | 'resume' = 'run') => {
+    const est = messages.find((m): m is EstimateMessage => m.id === estimateId && m.kind === 'estimate');
+    if (!est || loading) return;
+    void driveAction(activeId, est.actionId, mode);
+  }, [messages, loading, activeId, driveAction]);
 
   const cancelAction = useCallback((estimateId: string) => {
     const est = messages.find((m): m is EstimateMessage => m.id === estimateId && m.kind === 'estimate');
@@ -1481,8 +1688,13 @@ export default function ChatWidget() {
       const msgs: Message[] = Array.isArray(data?.session?.messages) ? data.session.messages : [];
       savedRef.current[sid] = JSON.stringify(msgs);
       setStore((st) => (st[sid] ? st : { ...st, [sid]: msgs }));
+      // Paid work that was running (or never confirmed) when this chat was last
+      // open: ask the server where it stands, and keep following it if it runs.
+      for (const m of msgs) {
+        if (m.kind === 'estimate' && (m.status === 'running' || m.status === 'pending')) void driveAction(sid, m.actionId, 'follow');
+      }
     } catch { loadedRef.current[sid] = false; }
-  }, [store]);
+  }, [store, driveAction]);
 
   const newChat = useCallback(() => {
     setActiveId(crypto.randomUUID());
@@ -1734,10 +1946,10 @@ export default function ChatWidget() {
                       <div className="pl-8"><ActivityCard msg={msg} /></div>
                     ) : msg.kind === 'estimate' ? (
                       <div className="pl-8">
-                        <EstimateCard msg={msg} busy={loading} onProceed={() => void runAction(msg.id)} onCancel={() => cancelAction(msg.id)} />
+                        <EstimateCard msg={msg} busy={loading} onProceed={() => runAction(msg.id)} onCancel={() => cancelAction(msg.id)} onResume={() => runAction(msg.id, 'resume')} />
                       </div>
                     ) : msg.kind === 'batch' ? (
-                      <div className="pl-8"><BatchCard msg={msg} /></div>
+                      <div className="pl-8"><BatchCard msg={msg} busy={loading} onResume={() => runAction(`estimate-${msg.id.slice('batch-'.length)}`, 'resume')} /></div>
                     ) : msg.kind === 'tool' ? (
                       <div className="pl-8"><ToolCard msg={msg} /></div>
                     ) : msg.kind === 'form' ? (
@@ -1765,16 +1977,7 @@ export default function ChatWidget() {
                         />
                       </div>
                     ) : msg.role === 'assistant' && msg.failed ? (
-                      <div className="flex justify-start gap-1.5">
-                        <SparkleAvatar size={22} />
-                        <div className="max-w-[80%] space-y-2 rounded-2xl rounded-bl-sm border border-red-100 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-700">
-                          <p>{msg.content}</p>
-                          <button type="button" disabled={loading} onClick={() => retry(msg.id)}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1 text-[11px] font-semibold text-red-700 shadow-sm ring-1 ring-red-200 hover:bg-red-100 disabled:opacity-50">
-                            <RotateCcw size={11} /> Retry
-                          </button>
-                        </div>
-                      </div>
+                      <FailedReply msg={msg} busy={loading} onRetry={() => retry(msg.id)} onStopAuto={() => stopAutoRetry(msg.id)} />
                     ) : msg.role === 'assistant' && !msg.content && messages.some((m) => m.kind === 'activity' && m.id === `activity-${msg.id}`) ? null : (
                       <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} gap-1.5`}>
                         {msg.role === 'assistant' && <SparkleAvatar size={22} />}
