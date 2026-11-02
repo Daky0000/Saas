@@ -2178,8 +2178,10 @@ async function publishToplatform(
     // Don't duplicate: only include excerpt if it differs from the title
     const fallbackCaption = socialExcerpt && socialExcerpt !== title ? socialExcerpt : '';
     const fallbackHashtags = toHashtags((post as any).tag_names);
-    const hasCustomCaption = typeof options?.captionOverride === 'string' && options.captionOverride.trim().length > 0;
-    const isSocialOnly = post.post_format === 'social_only' || !post.slug;
+    // A native social post (made for one platform) publishes its own text as the caption.
+    const nativeCaption = post.social_platform ? String(post.content || '').replace(/<[^>]+>/g, '').trim() : '';
+    const hasCustomCaption = (typeof options?.captionOverride === 'string' && options.captionOverride.trim().length > 0) || Boolean(nativeCaption);
+    const isSocialOnly = post.post_format === 'social_only' || !post.slug || Boolean(post.social_platform);
     const effectivePostUrl = isSocialOnly ? '' : postUrl;
 
     const fallbackTextParts = [
@@ -2192,7 +2194,7 @@ async function publishToplatform(
 
     const text = (
       hasCustomCaption
-        ? (options!.captionOverride as string)
+        ? (options?.captionOverride?.trim() ? options.captionOverride : nativeCaption)
         : customTemplate
           ? renderMessageTemplate(customTemplate, {
               title: String(post.title || ''),

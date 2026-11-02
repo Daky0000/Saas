@@ -1,5 +1,9 @@
 import { randomUUID } from 'crypto';
 import { MAGNIFIC_IMAGE_MODELS, MAGNIFIC_VIDEO_MODELS } from './magnificRoutes.ts';
+import {
+  FORMAT_LABEL, IMAGE_CREDITS, PLATFORM_LABEL, SOCIAL_COPY_CREDITS, VIDEO_CREDITS, clampSlides, mediaPlan,
+  normalizeFormat, normalizePlatform, postCredits, type SocialFormat, type SocialPlatform,
+} from './socialFormats.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chat sessions (history) and credit-gated actions.
@@ -14,8 +18,8 @@ import { MAGNIFIC_IMAGE_MODELS, MAGNIFIC_VIDEO_MODELS } from './magnificRoutes.t
 
 type Query = (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;
 
-/** Credits for one post written by the batch tool (the content-plan copy rate). */
-export const BATCH_POST_CREDITS = 2;
+/** Credits for the words of one post (the content-plan copy rate); media is priced on top. */
+export const BATCH_POST_CREDITS = SOCIAL_COPY_CREDITS;
 export const BATCH_MAX_POSTS = 30;
 
 let ensured: Promise<void> | null = null;
@@ -32,6 +36,13 @@ export function ensureChatTables(query: Query): Promise<void> {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`);
     await query(`CREATE INDEX IF NOT EXISTS chat_sessions_user_idx ON chat_sessions(user_id, updated_at DESC)`);
+    await query(`
+      CREATE TABLE IF NOT EXISTS user_custom_instructions (
+        user_id TEXT PRIMARY KEY,
+        instructions TEXT NOT NULL DEFAULT '',
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
+    await query(`ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS social_platform TEXT`).catch(() => undefined);
     await query(`
       CREATE TABLE IF NOT EXISTS chat_pending_actions (
         id TEXT PRIMARY KEY,
@@ -58,12 +69,33 @@ export interface CreditEstimate { credits: number; label: string; lines: string[
 export function estimateToolCredits(name: string, input: any): CreditEstimate | null {
   switch (name) {
     case 'create_posts_batch': {
-      const n = batchPosts(input).length;
+      const posts = batchPosts(input);
+      const n = posts.length;
       if (!n) return null;
+      // One line per kind of post, e.g. "2 × Instagram carousel (5 slides): 64".
+      const groups = new Map<string, { count: number; credits: number }>();
+      let credits = 0;
+      let images = 0;
+      let videos = 0;
+      for (const p of posts) {
+        const c = postCredits(p.format, p.slides, p.with_image);
+        const m = mediaPlan(p.format, p.slides, p.with_image);
+        credits += c;
+        images += m.images;
+        videos += m.videos;
+        const key = `${PLATFORM_LABEL[p.platform]} ${FORMAT_LABEL[p.format].toLowerCase()}${p.format === 'carousel' ? ` (${p.slides} slides)` : ''}${p.format === 'text' && p.with_image ? ' + image' : ''}`;
+        const g = groups.get(key) ?? { count: 0, credits: 0 };
+        g.count++;
+        g.credits += c;
+        groups.set(key, g);
+      }
+      const platforms = new Set(posts.map((p) => p.platform)).size;
+      const lines = [...groups].map(([k, g]) => `${g.count} × ${k}: ${g.credits} credits`);
+      lines.push(`Includes writing (${SOCIAL_COPY_CREDITS}/post)${images ? `, ${images} image${images === 1 ? '' : 's'} (${IMAGE_CREDITS} each)` : ''}${videos ? `, ${videos} video${videos === 1 ? '' : 's'} (${VIDEO_CREDITS} each)` : ''}. You're only charged for what is made.`);
       return {
-        credits: n * BATCH_POST_CREDITS,
-        label: `Write and schedule ${n} post${n === 1 ? '' : 's'}`,
-        lines: [`${n} post${n === 1 ? '' : 's'} × ${BATCH_POST_CREDITS} credits`],
+        credits,
+        label: `Create ${n} post${n === 1 ? '' : 's'}${platforms > 1 ? ` across ${platforms} platforms` : ` for ${PLATFORM_LABEL[posts[0].platform]}`}`,
+        lines,
       };
     }
     case 'magnific_one_generate': {
@@ -102,23 +134,49 @@ export function estimateToolCredits(name: string, input: any): CreditEstimate | 
   }
 }
 
-export interface BatchPost { topic: string; platforms: string[]; scheduled_at: string }
+export interface BatchPost {
+  topic: string;
+  platform: SocialPlatform;
+  format: SocialFormat;
+  /** Carousel slide count (3–10). */
+  slides: number;
+  /** A text post that should still carry an image. */
+  with_image: boolean;
+  /** Art direction for the visuals, when the planner gave one. */
+  visual: string;
+  scheduled_at: string;
+}
 
-/** The batch tool's posts, cleaned: at most 30, each with a date (tomorrow 09:00 UTC onwards, one a day, when not given). */
+/**
+ * The batch tool's posts, cleaned: one native post per platform (an entry
+ * naming several platforms becomes one post each), at most 30, each with a
+ * format the platform supports and a date (tomorrow 09:00 UTC onwards, one
+ * day apart per entry, when not given).
+ */
 export function batchPosts(input: any, now = new Date()): BatchPost[] {
   const raw: any[] = Array.isArray(input?.posts) ? input.posts.slice(0, BATCH_MAX_POSTS) : [];
   const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 9, 0, 0));
-  return raw
-    .map((p, i) => {
-      const topic = String(p?.topic ?? p?.title ?? p?.brief ?? '').trim().slice(0, 600);
-      const when = p?.scheduled_at ? new Date(p.scheduled_at) : null;
-      const valid = when && !Number.isNaN(when.getTime()) && when.getTime() > now.getTime();
-      const fallback = new Date(first.getTime() + i * 86_400_000);
-      const platforms = Array.isArray(p?.platforms) ? p.platforms.map((x: unknown) => String(x).toLowerCase()).slice(0, 8)
-        : Array.isArray(input?.platforms) ? input.platforms.map((x: unknown) => String(x).toLowerCase()).slice(0, 8) : [];
-      return { topic, platforms, scheduled_at: (valid ? when! : fallback).toISOString() };
-    })
-    .filter((p) => p.topic);
+  const out: BatchPost[] = [];
+  raw.forEach((p, i) => {
+    const topic = String(p?.topic ?? p?.title ?? p?.brief ?? '').trim().slice(0, 600);
+    if (!topic) return;
+    const when = p?.scheduled_at ? new Date(p.scheduled_at) : null;
+    const valid = when && !Number.isNaN(when.getTime()) && when.getTime() > now.getTime();
+    const scheduled_at = (valid ? when! : new Date(first.getTime() + i * 86_400_000)).toISOString();
+    const named = [p?.platform, ...(Array.isArray(p?.platforms) ? p.platforms : []), ...(p?.platform || Array.isArray(p?.platforms) ? [] : Array.isArray(input?.platforms) ? input.platforms : [])]
+      .map(normalizePlatform).filter((x): x is SocialPlatform => Boolean(x));
+    const platforms = [...new Set(named.length ? named : ['instagram' as SocialPlatform])];
+    for (const platform of platforms) {
+      const format = normalizeFormat(platform, p?.format);
+      out.push({
+        topic, platform, format, scheduled_at,
+        slides: format === 'carousel' ? clampSlides(p?.slides) : 0,
+        with_image: format === 'text' ? Boolean(p?.with_image) : false,
+        visual: String(p?.visual ?? p?.visual_direction ?? '').trim().slice(0, 600),
+      });
+    }
+  });
+  return out.slice(0, BATCH_MAX_POSTS);
 }
 
 export async function createPendingAction(query: Query, userId: string, tool: string, args: unknown, estimate: CreditEstimate): Promise<string> {
@@ -156,4 +214,35 @@ export function sanitizeSessionMessages(messages: unknown): unknown[] {
     }
     return m;
   });
+}
+
+// ── Custom instructions: the user's standing orders for every agent task ─────
+
+export const CUSTOM_INSTRUCTIONS_MAX = 4000;
+
+export async function getCustomInstructions(query: Query, userId: string): Promise<string> {
+  try {
+    await ensureChatTables(query);
+    const { rows } = await query(`SELECT instructions FROM user_custom_instructions WHERE user_id=$1`, [userId]);
+    return String(rows[0]?.instructions || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+export async function saveCustomInstructions(query: Query, userId: string, text: string): Promise<string> {
+  await ensureChatTables(query);
+  const clean = String(text || '').replace(/\r\n/g, '\n').trim().slice(0, CUSTOM_INSTRUCTIONS_MAX);
+  await query(
+    `INSERT INTO user_custom_instructions (user_id, instructions, updated_at) VALUES ($1,$2,NOW())
+     ON CONFLICT (user_id) DO UPDATE SET instructions=EXCLUDED.instructions, updated_at=NOW()`,
+    [userId, clean],
+  );
+  return clean;
+}
+
+/** The block every agent prompt carries: the user's own rules, above defaults (never above safety). */
+export function customInstructionsBlock(text: string): string {
+  if (!text) return '';
+  return `## THE USER'S CUSTOM INSTRUCTIONS — check and obey on EVERY task\nThese are the user's standing orders for all work you do for them. They override your defaults and style choices (formats, images, tone, platforms, length, schedule). They never override safety rules or the credit confirmation step.\n${text}`;
 }

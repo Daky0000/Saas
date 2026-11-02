@@ -40,6 +40,13 @@ export async function buildSharedAgentContext(userId: string): Promise<string> {
   const parts: string[] = [];
   const safe = async (fn: () => Promise<void>) => { try { await fn(); } catch { /* section skipped */ } };
 
+  // The user's custom instructions come first: every agent obeys them on every task.
+  await safe(async () => {
+    const { rows } = await dbQuery(`SELECT instructions FROM user_custom_instructions WHERE user_id=$1`, [userId]);
+    const text = String(rows[0]?.instructions || '').trim();
+    if (text) parts.push(`USER'S CUSTOM INSTRUCTIONS (obey on every task; they override defaults, not safety rules):\n${text}`);
+  });
+
   await safe(async () => {
     const { rows } = await dbQuery(
       `SELECT brand_name, niche, tone, audience, goals, website FROM brand_profiles WHERE user_id=$1`,

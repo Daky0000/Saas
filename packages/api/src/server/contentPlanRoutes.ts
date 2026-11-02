@@ -15,6 +15,7 @@ import { durableMediaUrl, getMediaStorage, storeMediaBytes } from './mediaStore.
 import { nvidiaImage, nvidiaReady } from './nvidiaModels.ts';
 import { openCheckpoint } from './aiCheckpoints.ts';
 import { fence } from './aiGuard.ts';
+import { clearCalendarCacheForUser } from '../link-metadata.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auto-content plans.
@@ -340,6 +341,7 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
          String(piece.content || ''), String(piece.excerpt || '').slice(0, 500), imageUrl || '', scheduledAt.toISOString(),
          autoPublish ? 'not_required' : 'review_required']
       );
+      clearCalendarCacheForUser(plan.user_id);
       await pool.query(
         `UPDATE content_plan_runs SET status='done', blog_post_id=$2, title=$3, image_url=$4, error=NULL WHERE id=$1`,
         [runId, postId, title, imageUrl]

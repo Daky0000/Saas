@@ -7,10 +7,47 @@ process.env.WORDPRESS_ENCRYPTION_KEY ??= 'z'.repeat(32);
 
 const ca = await import('../src/server/chatActions.ts');
 
-test('batch: every post is priced at the flat rate', () => {
-  const e = ca.estimateToolCredits('create_posts_batch', { posts: [{ topic: 'a' }, { topic: 'b' }, { topic: 'c' }] });
-  assert.equal(e?.credits, 3 * ca.BATCH_POST_CREDITS);
-  assert.match(String(e?.label), /3 posts/);
+const sf = await import('../src/server/socialFormats.ts');
+
+test('batch: each post is priced with its own media — writing + images + video', () => {
+  const e = ca.estimateToolCredits('create_posts_batch', { posts: [
+    { platform: 'linkedin', format: 'text', topic: 'a' },
+    { platform: 'instagram', format: 'carousel', slides: 4, topic: 'b' },
+    { platform: 'instagram', format: 'reel', topic: 'c' },
+  ] });
+  const expected = sf.SOCIAL_COPY_CREDITS * 3 + 4 * sf.IMAGE_CREDITS + (sf.IMAGE_CREDITS + sf.VIDEO_CREDITS);
+  assert.equal(e?.credits, expected);
+  assert.match(String(e?.label), /3 posts across 2 platforms/);
+  assert.ok(e?.lines.some((l) => /Instagram carousel \(4 slides\)/.test(l)));
+});
+
+test('batch: one native post per platform; formats the platform cannot do are corrected', () => {
+  const posts = ca.batchPosts({ posts: [{ topic: 'launch', platforms: ['Instagram', 'twitter'], format: 'text' }, { topic: 'tips', platform: 'tiktok', format: 'carousel' }] });
+  assert.deepEqual(posts.map((p) => `${p.platform}:${p.format}`), ['instagram:single_image', 'x:text', 'tiktok:video']);
+  assert.equal(posts[0].scheduled_at, posts[1].scheduled_at, 'the same idea goes out the same day on both platforms');
+});
+
+test('formats: carousels keep 3-10 slides, X captions fit 280 characters', () => {
+  assert.equal(sf.clampSlides(1), 3);
+  assert.equal(sf.clampSlides(40), 10);
+  const text = sf.publishText('x', { caption: 'a'.repeat(300), hashtags: ['launch'] });
+  assert.ok(text.length <= 280);
+  assert.equal(sf.publishText('instagram', { caption: 'Hello', hashtags: ['one', 'two'] }), 'Hello\n\n#one #two');
+  assert.equal(sf.normalizeFormat('instagram', 'text'), 'single_image', 'Instagram is never text-only');
+  assert.equal(sf.aspectRatioFor('instagram', 'reel'), '9:16');
+});
+
+test('formats: the writer reply is parsed into caption, hashtags and slides', () => {
+  const p = sf.parsePiece('Sure! {"title":"T","caption":"Cap","hashtags":["#a","b c"],"slides":[{"headline":"H1","body":""},{"headline":"H2","body":"B"}],"visual_style":"pastel"}', 'carousel', 5);
+  assert.equal(p.caption, 'Cap');
+  assert.deepEqual(p.hashtags, ['a', 'bc']);
+  assert.equal(p.slides.length, 2);
+  assert.equal(p.visual_style, 'pastel');
+});
+
+test('custom instructions block tells every agent to obey them', () => {
+  assert.equal(ca.customInstructionsBlock(''), '');
+  assert.match(ca.customInstructionsBlock('Always add an image'), /EVERY task[\s\S]*Always add an image/);
 });
 
 test('batch: posts without a usable date go one a day from tomorrow 09:00 UTC; empty briefs are dropped', () => {

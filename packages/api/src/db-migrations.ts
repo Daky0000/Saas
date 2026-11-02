@@ -5281,6 +5281,12 @@ export async function runIncrementalUpgradeMigrations(pool: Pool): Promise<void>
     ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS video_url TEXT;
     ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS tenant_id TEXT;
     ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS autopilot_item_id TEXT;
+    ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS social_platform TEXT;
+    CREATE TABLE IF NOT EXISTS user_custom_instructions (
+      user_id TEXT PRIMARY KEY,
+      instructions TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `).catch(() => undefined);
 
   await pool.query(`

@@ -15,11 +15,14 @@ import {
   Plus,
   RotateCcw,
   Send,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
 import { getApiBaseUrl } from '../utils/apiBase';
+import { PlatformLogo } from './PlatformLogo';
+import { FORMAT_LABEL as SOCIAL_FORMAT_LABEL, PLATFORM_META, platformId } from './social/socialMeta';
 import { notifyCreditsChanged } from './CreditBadge';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -121,7 +124,11 @@ type EstimateMessage = {
   /** Not enough credits to start: show the top-up link; the card stays usable. */
   needsCredits?: boolean;
 };
-type BatchItem = { index: number; topic: string; status: 'queued' | 'writing' | 'done' | 'failed'; post?: any; error?: string };
+type BatchItem = {
+  index: number; topic: string; platform?: string; format?: string;
+  status: 'queued' | 'writing' | 'media' | 'done' | 'failed';
+  progress?: string; post?: any; error?: string; note?: string;
+};
 /** Posts being written one by one; each lands on the calendar as soon as it is done. */
 type BatchMessage = {
   kind: 'batch';
@@ -818,7 +825,7 @@ function BatchCard({ msg, busy, onResume }: { msg: BatchMessage; busy: boolean; 
       <div className="border-b border-slate-100 px-3 py-2">
         <div className="flex items-center justify-between gap-2">
           <span className="font-semibold text-slate-700">
-            {msg.status === 'running' ? 'Writing posts' : 'Posts on your calendar'} · {done} of {msg.total}
+            {msg.status === 'running' ? 'Creating posts' : 'Posts on your calendar'} · {done} of {msg.total}
           </span>
           <span className="tabular-nums text-slate-500">{msg.creditsUsed} credits used</span>
         </div>
@@ -832,29 +839,58 @@ function BatchCard({ msg, busy, onResume }: { msg: BatchMessage; busy: boolean; 
         {msg.stopped && <p className="mt-1 text-[11px] text-red-600">{msg.stopped}</p>}
       </div>
       <ul className="max-h-64 divide-y divide-slate-100 overflow-y-auto">
-        {msg.items.map((item) => (
-          <li key={item.index} className="px-3 py-1.5">
-            <button type="button" className="flex w-full items-center gap-2 text-left" disabled={item.status !== 'done'}
-              onClick={() => setOpenIdx((o) => (o === item.index ? null : item.index))}>
-              {item.status === 'writing' ? <Loader2 size={12} className="shrink-0 animate-spin text-indigo-500" />
-                : item.status === 'done' ? <CheckCircle size={12} className="shrink-0 text-emerald-500" />
-                  : item.status === 'failed' ? <X size={12} className="shrink-0 text-red-500" />
-                    : <Clock size={12} className="shrink-0 text-slate-300" />}
-              <span className={`min-w-0 flex-1 truncate ${item.status === 'done' ? 'font-medium text-slate-800' : 'text-slate-500'}`}>
-                {item.post?.title || item.topic}
-              </span>
-              {item.post?.scheduled_at && (
-                <span className="shrink-0 text-[10.5px] text-slate-400">
-                  {new Date(item.post.scheduled_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+        {msg.items.map((item) => {
+          const pid = platformId(item.platform ?? item.post?.social_platform);
+          const meta = pid ? PLATFORM_META[pid] : null;
+          const fmt = item.format ?? item.post?.post_format;
+          const media: any[] = Array.isArray(item.post?.media_assets) ? item.post.media_assets : [];
+          const busy = item.status === 'writing' || item.status === 'media';
+          return (
+            <li key={item.index} className="px-3 py-1.5">
+              <button type="button" className="flex w-full items-center gap-2 text-left" disabled={item.status !== 'done' && !media.length}
+                onClick={() => setOpenIdx((o) => (o === item.index ? null : item.index))}>
+                {busy ? <Loader2 size={12} className="shrink-0 animate-spin text-indigo-500" />
+                  : item.status === 'done' ? <CheckCircle size={12} className="shrink-0 text-emerald-500" />
+                    : item.status === 'failed' ? <X size={12} className="shrink-0 text-red-500" />
+                      : <Clock size={12} className="shrink-0 text-slate-300" />}
+                {pid && <PlatformLogo platform={pid} size={14} />}
+                <span className="min-w-0 flex-1">
+                  <span className={`block truncate ${item.status === 'done' ? 'font-medium text-slate-800' : 'text-slate-500'}`}>{item.post?.title || item.topic || 'Waiting…'}</span>
+                  <span className="block truncate text-[10px]" style={{ color: meta?.color ?? '#94a3b8' }}>
+                    {meta ? `${meta.label} ${SOCIAL_FORMAT_LABEL[fmt] ?? ''}` : ''}{busy && item.progress ? ` · ${item.progress}` : ''}
+                  </span>
                 </span>
+                {media[0]?.url && (
+                  <span className="relative h-7 w-7 shrink-0 overflow-hidden rounded bg-slate-100">
+                    {media[0].type === 'video' ? <video src={media[0].url} className="h-full w-full object-cover" muted /> : <img src={media[0].url} alt="" className="h-full w-full object-cover" />}
+                    {media.length > 1 && <span className="absolute bottom-0 right-0 bg-black/60 px-0.5 text-[8px] font-bold text-white">{media.length}</span>}
+                  </span>
+                )}
+                {item.post?.scheduled_at && (
+                  <span className="shrink-0 text-[10.5px] text-slate-400">
+                    {new Date(item.post.scheduled_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                  </span>
+                )}
+              </button>
+              {item.status === 'failed' && item.error && <p className="pl-5 text-[10.5px] text-red-500">{item.error}</p>}
+              {item.status === 'done' && item.note && <p className="pl-5 text-[10.5px] text-amber-700">{item.note}</p>}
+              {openIdx === item.index && (
+                <div className="mt-1 space-y-1.5 rounded-lg bg-slate-50 p-2">
+                  {media.length > 0 && (
+                    <div className="flex gap-1 overflow-x-auto">
+                      {media.map((m, k) => (
+                        <span key={m.url + k} className="h-20 w-16 shrink-0 overflow-hidden rounded-md bg-slate-200">
+                          {m.type === 'video' ? <video src={m.url} className="h-full w-full object-cover" controls /> : <img src={m.url} alt="" className="h-full w-full object-cover" />}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {item.post?.content && <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-slate-600">{item.post.content}</p>}
+                </div>
               )}
-            </button>
-            {item.status === 'failed' && item.error && <p className="pl-5 text-[10.5px] text-red-500">{item.error}</p>}
-            {openIdx === item.index && item.post?.content && (
-              <p className="mt-1 whitespace-pre-wrap rounded-lg bg-slate-50 px-2 py-1.5 pl-2 text-[11px] leading-relaxed text-slate-600">{item.post.content}</p>
-            )}
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ul>
       {msg.status === 'done' && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-3 py-2">
@@ -869,10 +905,75 @@ function BatchCard({ msg, busy, onResume }: { msg: BatchMessage; busy: boolean; 
               </button>
             )}
             {msg.stopped && <a href="/credits" className="text-[11px] font-semibold text-indigo-600 hover:underline">Top up</a>}
-            {done > 0 && <a href="/posts" className="text-[11px] font-semibold text-indigo-600 hover:underline">Open in Posts →</a>}
+            {done > 0 && <a href="/posts/automation?tab=calendar" className="text-[11px] font-semibold text-indigo-600 hover:underline">Open calendar →</a>}
           </span>
         </div>
       )}
+    </div>
+  );
+}
+
+const INSTRUCTION_EXAMPLES = [
+  'Every post needs an image.',
+  'Write in British English and keep a warm, witty tone.',
+  'Post to Instagram and LinkedIn unless I say otherwise.',
+  'We are a new account — focus on growing followers.',
+  'Never use more than 5 hashtags.',
+];
+
+/** The user's standing orders: every agent checks and obeys them on every task. */
+function CustomInstructionsPanel({ onDone }: { onDone: () => void }) {
+  const [text, setText] = useState('');
+  const [saved, setSaved] = useState('');
+  const [max, setMax] = useState(4000);
+  const [state, setState] = useState<'loading' | 'idle' | 'saving' | 'saved' | 'error'>('loading');
+  useEffect(() => {
+    fetch(`${getApiBaseUrl()}/api/ai/custom-instructions`, { headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { const t = String(d?.instructions || ''); setText(t); setSaved(t); if (d?.max) setMax(d.max); setState('idle'); })
+      .catch(() => setState('idle'));
+  }, []);
+  const save = async () => {
+    setState('saving');
+    try {
+      const r = await fetch(`${getApiBaseUrl()}/api/ai/custom-instructions`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('auth_token')}` },
+        body: JSON.stringify({ instructions: text }),
+      });
+      if (!r.ok) throw new Error();
+      const d = await r.json();
+      setSaved(String(d?.instructions ?? text));
+      setState('saved');
+    } catch { setState('error'); }
+  };
+  const dirty = text !== saved;
+  return (
+    <div className="space-y-2.5 px-3 py-3">
+      <div>
+        <p className="text-xs font-semibold text-ink">Custom instructions</p>
+        <p className="mt-0.5 text-[11px] leading-relaxed text-muted">Rules every agent follows on every task — posts, calendars, images, replies. Write them like you'd brief a new team member.</p>
+      </div>
+      <textarea value={text} onChange={(e) => { setText(e.target.value.slice(0, max)); if (state === 'saved') setState('idle'); }} rows={8}
+        placeholder={'e.g.\n• Every post needs an image.\n• We are a brand-new account.\n• Keep captions under 100 words.'}
+        disabled={state === 'loading'}
+        className="w-full resize-y rounded-[10px] border border-line bg-soft px-2.5 py-2 text-xs leading-relaxed text-ink outline-none focus:border-blue" />
+      <div className="flex flex-wrap gap-1">
+        {INSTRUCTION_EXAMPLES.map((ex) => (
+          <button key={ex} type="button" onClick={() => setText((t) => (t.includes(ex) ? t : `${t.trim() ? `${t.trim()}\n` : ''}${ex}`))}
+            className="rounded-full border border-line px-2 py-0.5 text-[10.5px] text-muted hover:border-blue hover:text-ink">+ {ex}</button>
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <button type="button" onClick={() => void save()} disabled={!dirty || state === 'saving'}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+          {state === 'saving' && <Loader2 size={11} className="animate-spin" />} Save
+        </button>
+        <button type="button" onClick={onDone} className="rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-muted hover:bg-soft">Back to chat</button>
+        <span className="ml-auto text-[10.5px] tabular-nums text-faint">{text.length}/{max}</span>
+      </div>
+      {state === 'saved' && <p className="text-[11px] font-medium text-emerald-700">✓ Saved — every agent will follow these from your next task.</p>}
+      {state === 'error' && <p className="text-[11px] text-red-600">Couldn't save — check your connection and press Save again.</p>}
     </div>
   );
 }
@@ -1178,6 +1279,7 @@ export default function ChatWidget() {
   const [runningIds, setRunningIds] = useState<Record<string, boolean>>({});
   const [sessionList, setSessionList] = useState<SessionMeta[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [showInstructions, setShowInstructions] = useState(false);
   const savedRef = useRef<Record<string, string>>({});
   const loadedRef = useRef<Record<string, boolean>>({});
 
@@ -1564,7 +1666,12 @@ export default function ChatWidget() {
         setMessages((prev) => (prev.some((m) => m.id === batchId) ? prev : [...prev, { kind: 'batch', id: batchId, total: 0, items: [], creditsUsed: 0, status: 'running' } satisfies BatchMessage]));
         patchBatch((b) => {
           const items = [...b.items];
-          items[ev.index] = { index: ev.index, topic: ev.topic, status: ev.status, post: ev.post, error: ev.error };
+          const prev = items[ev.index];
+          items[ev.index] = {
+            ...prev, index: ev.index, topic: ev.topic ?? prev?.topic ?? '', status: ev.status,
+            platform: ev.platform ?? prev?.platform, format: ev.format ?? prev?.format,
+            progress: ev.progress, post: ev.post ?? prev?.post, error: ev.error, note: ev.note,
+          };
           return { ...b, total: Math.max(b.total, items.length), items, creditsUsed: b.creditsUsed + (Number(ev.credits_used) || 0) };
         });
         // Each post is charged as it is saved: the header balance follows along.
@@ -1864,7 +1971,11 @@ export default function ChatWidget() {
                 <span className="h-1.5 w-1.5 rounded-full bg-positive" /> ACTIVE
               </div>
             </div>
-            <button type="button" onClick={() => setShowHistory((v) => !v)} title="Chat history"
+            <button type="button" onClick={() => { setShowInstructions((v) => !v); setShowHistory(false); }} title="Custom instructions"
+              className={`flex h-6 w-6 items-center justify-center rounded-md hover:bg-soft hover:text-ink ${showInstructions ? 'bg-soft text-ink' : 'text-faint'}`} aria-label="Custom instructions">
+              <SlidersHorizontal size={13} />
+            </button>
+            <button type="button" onClick={() => { setShowHistory((v) => !v); setShowInstructions(false); }} title="Chat history"
               className={`relative flex h-6 w-6 items-center justify-center rounded-md hover:bg-soft hover:text-ink ${showHistory ? 'bg-soft text-ink' : 'text-faint'}`} aria-label="Chat history">
               <History size={13} />
               {Object.entries(runningIds).some(([id, on]) => on && id !== activeId) && (
@@ -1881,7 +1992,9 @@ export default function ChatWidget() {
 
           {/* Body */}
           <div className="flex-1 overflow-y-auto">
-            {showHistory ? (
+            {showInstructions ? (
+              <CustomInstructionsPanel onDone={() => setShowInstructions(false)} />
+            ) : showHistory ? (
               <div className="px-2 py-2">
                 <button type="button" onClick={newChat}
                   className="mb-2 flex w-full items-center gap-2 rounded-[10px] border border-dashed border-line px-3 py-2 text-xs font-medium text-ink hover:border-blue hover:bg-pale/50">
