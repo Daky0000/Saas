@@ -7,6 +7,8 @@ import { logger } from '../logger.ts';
 import { recordAuditLog } from '../link-metadata.ts';
 import { encryptPlatformConfig, decryptPlatformConfig } from '../integration-helpers.ts';
 import { chargeAICredits } from '../ai-helpers.ts';
+import { getBackendPublicUrl } from '../platform-helpers.ts';
+import { config } from '../config.ts';
 import { callMagnificMcpTool } from './mcpRoutes.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
@@ -184,7 +186,51 @@ export async function getFreepikApiKey(pool: Pool | null): Promise<string> {
   return getMagnificApiKey(pool);
 }
 
+// ── Webhooks ──────────────────────────────────────────────────────────────────
+// Magnific signs each task callback with the secret issued next to the API key
+// (magnific.com → API keys). Admin-configured secret wins; env is fallback only.
+
+export async function getMagnificWebhookSecret(pool: Pool | null): Promise<string> {
+  try {
+    const cfg = await pool!.query(`SELECT config FROM platform_configs WHERE platform = 'magnific' LIMIT 1`);
+    const dbSecret: string = decryptPlatformConfig(cfg.rows[0]?.config)?.webhookSecret ?? '';
+    if (dbSecret) return dbSecret;
+  } catch (_err) { /* fall through to env */ }
+  return process.env.MAGNIFIC_WEBHOOK_SECRET || '';
+}
+
+export function magnificWebhookUrl(): string {
+  const base = (getBackendPublicUrl() || config.appUrl).replace(/\/$/, '');
+  return base ? `${base}/webhooks/magnific` : '';
+}
+
+// The callback URL magnificPost attaches to every task. Empty until a secret
+// exists, since an unverifiable callback is discarded anyway. Polling stays the
+// primary path either way. Re-read every 5 minutes, and at once on an admin save.
+let webhookTarget = '';
+let webhookPool: Pool | null = null;
+let webhookCheckedAt = 0;
+export async function refreshMagnificWebhookTarget(pool: Pool | null): Promise<void> {
+  webhookPool = pool;
+  webhookCheckedAt = Date.now();
+  webhookTarget = (await getMagnificWebhookSecret(pool)) ? magnificWebhookUrl() : '';
+}
+async function currentWebhookTarget(): Promise<string> {
+  if (Date.now() - webhookCheckedAt > 5 * 60_000) await refreshMagnificWebhookTarget(webhookPool);
+  return webhookTarget;
+}
+
+/** Result URLs from a task body, shared by polling and the webhook. */
+export function magnificTaskUrls(data: any): string[] {
+  const rawGen = data?.generated ?? data?.output ?? (data?.output_url ? [data.output_url] : data?.url ? [data.url] : data?.audio_url ? [data.audio_url] : []);
+  return (Array.isArray(rawGen) ? rawGen : [rawGen])
+    .map((item: any) => (typeof item === 'string' ? item : item?.url ?? item?.audio_url ?? item?.video_url ?? ''))
+    .filter(Boolean);
+}
+
 export async function magnificPost(path: string, body: object, apiKey: string) {
+  const target = await currentWebhookTarget();
+  if (target && !('webhook_url' in body)) body = { ...body, webhook_url: target };
   return axios.post(`${MAGNIFIC_BASE}${path}`, body, {
     headers: proxyHeaders({
       'x-magnific-api-key': apiKey,
@@ -219,10 +265,7 @@ export async function pollMagnificTask(
     const status: string = String(data?.status ?? '').toUpperCase();
     onProgress?.(status);
     if (status === 'COMPLETED' || status === 'SUCCEEDED' || status === 'DONE') {
-      const rawGen = data?.generated ?? data?.output ?? (data?.output_url ? [data.output_url] : data?.url ? [data.url] : data?.audio_url ? [data.audio_url] : []);
-      const urls: string[] = (Array.isArray(rawGen) ? rawGen : [rawGen])
-        .map((item: any) => (typeof item === 'string' ? item : item?.url ?? item?.audio_url ?? item?.video_url ?? ''))
-        .filter(Boolean);
+      const urls = magnificTaskUrls(data);
       return { url: urls[0] ?? null, urls, error: null };
     }
     if (status === 'FAILED' || status === 'ERROR') {
@@ -1088,6 +1131,9 @@ export async function freepikGenerateImage(
 
 export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase, pool }: MagnificDeps): Router {
   const router = express.Router();
+  webhookPool = pool;
+
+  const mask = (v: string) => (v.length > 8 ? `${'*'.repeat(v.length - 4)}${v.slice(-4)}` : (v ? '****' : ''));
 
   // GET /api/admin/magnific/config
   router.get('/admin/magnific/config', async (req: Request, res: Response) => {
@@ -1096,29 +1142,47 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
     if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
     try {
       const r = await pool!.query(`SELECT config FROM platform_configs WHERE platform='magnific' LIMIT 1`);
-      const key: string = decryptPlatformConfig(r.rows[0]?.config)?.apiKey ?? '';
-      const masked = key.length > 8 ? `${'*'.repeat(key.length - 4)}${key.slice(-4)}` : (key ? '****' : '');
-      return res.json({ success: true, hasKey: !!key, maskedKey: masked });
+      const cfg = decryptPlatformConfig(r.rows[0]?.config) ?? {};
+      const key: string = cfg.apiKey || process.env.MAGNIFIC_API_KEY || '';
+      const secret: string = cfg.webhookSecret || process.env.MAGNIFIC_WEBHOOK_SECRET || '';
+      return res.json({
+        success: true,
+        hasKey: !!key,
+        maskedKey: mask(key),
+        keySource: cfg.apiKey ? 'admin' : key ? 'env' : null,
+        hasWebhookSecret: !!secret,
+        maskedWebhookSecret: mask(secret),
+        webhookSecretSource: cfg.webhookSecret ? 'admin' : secret ? 'env' : null,
+        webhookUrl: magnificWebhookUrl(),
+      });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }
   });
 
-  // PUT /api/admin/magnific/config
+  // PUT /api/admin/magnific/config — either field alone replaces just that field.
   router.put('/admin/magnific/config', async (req: Request, res: Response) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
     if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
-    const { apiKey } = req.body as { apiKey?: string };
-    if (!apiKey?.trim()) return res.status(400).json({ error: 'apiKey is required' });
+    const { apiKey, webhookSecret } = req.body as { apiKey?: string; webhookSecret?: string };
+    if (!apiKey?.trim() && !webhookSecret?.trim()) return res.status(400).json({ error: 'apiKey or webhookSecret is required' });
     try {
+      const existing = await pool!.query(`SELECT config FROM platform_configs WHERE platform='magnific' LIMIT 1`);
+      const next: Record<string, string> = { ...(decryptPlatformConfig(existing.rows[0]?.config) ?? {}) };
+      if (apiKey?.trim()) next.apiKey = apiKey.trim();
+      if (webhookSecret?.trim()) next.webhookSecret = webhookSecret.trim();
       await pool!.query(
         `INSERT INTO platform_configs (platform, config, enabled, updated_at)
          VALUES ('magnific', $1, true, NOW())
          ON CONFLICT (platform) DO UPDATE SET config=$1, enabled=true, updated_at=NOW()`,
-        [JSON.stringify(encryptPlatformConfig({ apiKey: apiKey.trim() }))]
+        [JSON.stringify(encryptPlatformConfig(next))]
       );
-      void recordAuditLog((admin as any).id, 'admin_provider_key_updated', [], { platform: 'magnific' });
+      await refreshMagnificWebhookTarget(pool);
+      void recordAuditLog((admin as any).id, 'admin_provider_key_updated', [], {
+        platform: 'magnific',
+        fields: [apiKey?.trim() && 'apiKey', webhookSecret?.trim() && 'webhookSecret'].filter(Boolean),
+      });
       return res.json({ success: true });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });

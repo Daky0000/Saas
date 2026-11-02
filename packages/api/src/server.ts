@@ -941,11 +941,17 @@ app.use('/api/surveys', registerSurveyRoutes({ requireAuth, pool: pool! }));
 app.use('/api/public/surveys', registerPublicSurveyRoutes({ pool: pool!, fireAutomationTrigger: automationEngine.fireAutomationTrigger }));
 
 // ─── Leads & Google Sheets ──────────────────────────────────────────────────
-const GS_CLIENT_ID = process.env.GOOGLE_SHEETS_CLIENT_ID || '';
-const GS_CLIENT_SECRET = process.env.GOOGLE_SHEETS_CLIENT_SECRET || '';
+// Admin → Integrations → Google Sheets wins; env is fallback only
+const getGsCredentials = async () => {
+  const cfg = await getPlatformConfig('google_sheets').catch(() => ({} as Record<string, string>));
+  return {
+    clientId: String(cfg.clientId || process.env.GOOGLE_SHEETS_CLIENT_ID || '').trim(),
+    clientSecret: String(cfg.clientSecret || process.env.GOOGLE_SHEETS_CLIENT_SECRET || '').trim(),
+  };
+};
 const GS_REDIRECT = (process.env.API_URL || config.appUrl).replace(/\/$/, '') + '/api/google-sheets/callback';
 const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyx.com';
-const leadsDeps = { requireAuth, pool: pool!, frontendUrl: FRONTEND_URL, gsClientId: GS_CLIENT_ID, gsClientSecret: GS_CLIENT_SECRET, gsRedirect: GS_REDIRECT };
+const leadsDeps = { requireAuth, pool: pool!, frontendUrl: FRONTEND_URL, getGsCredentials, gsRedirect: GS_REDIRECT };
 app.use('/api/leads', registerLeadsRoutes(leadsDeps));
 app.use('/api/google-sheets', registerGoogleSheetsRoutes(leadsDeps));
 
