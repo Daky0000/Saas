@@ -173,6 +173,7 @@ export const DEFAULT_TOOL_RULES: Record<string, ToolRule> = {
   create_task: { risk: 'write', perTurn: 8, maxArgChars: 4_000 },
   update_task_status: { risk: 'write', perTurn: 10, maxArgChars: 1_000 },
   schedule_post: { risk: 'external', perTurn: 5, maxArgChars: 20_000 },
+  create_posts_batch: { risk: 'spend', perTurn: 1, maxArgChars: 30_000 },
   magnific_one_generate: { risk: 'spend', perTurn: 2, maxArgChars: 6_000 },
   magnific_generate_image: { risk: 'spend', perTurn: 3, maxArgChars: 6_000 },
   magnific_edit_image: { risk: 'spend', perTurn: 3, maxArgChars: 6_000 },

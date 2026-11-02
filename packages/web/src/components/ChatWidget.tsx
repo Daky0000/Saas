@@ -10,11 +10,13 @@ import {
   Mic,
   MicOff,
   Loader2,
+  History,
   Paperclip,
+  Plus,
   RotateCcw,
   Send,
-  Settings,
   Sparkles,
+  Trash2,
   X,
 } from 'lucide-react';
 import { getApiBaseUrl } from '../utils/apiBase';
@@ -93,7 +95,72 @@ type PlanMessage = {
   status: 'pending' | 'executing' | 'done';
   agentStatuses?: Record<string, { running: boolean; analysis: string }>;
 };
-type Message = TextMessage | ToolMessage | FormMessage | SchedulerMessage | PlanMessage | ActivityMessage;
+/** A credit estimate the user must accept before a paid action runs. */
+type EstimateMessage = {
+  kind: 'estimate';
+  id: string;
+  actionId: string;
+  label: string;
+  credits: number;
+  lines: string[];
+  balance: number | null;
+  status: 'pending' | 'running' | 'done' | 'cancelled' | 'failed';
+  error?: string;
+};
+type BatchItem = { index: number; topic: string; status: 'queued' | 'writing' | 'done' | 'failed'; post?: any; error?: string };
+/** Posts being written one by one; each lands on the calendar as soon as it is done. */
+type BatchMessage = {
+  kind: 'batch';
+  id: string;
+  total: number;
+  items: BatchItem[];
+  creditsUsed: number;
+  status: 'running' | 'done';
+  stopped?: string;
+};
+type Message = TextMessage | ToolMessage | FormMessage | SchedulerMessage | PlanMessage | ActivityMessage | EstimateMessage | BatchMessage;
+type SessionMeta = { id: string; title: string; updated_at: string };
+const NO_MESSAGES: Message[] = [];
+
+function sessionTitle(msgs: Message[]): string {
+  const first = msgs.find((m): m is TextMessage => m.kind === 'text' && m.role === 'user');
+  const text = (first?.raw || first?.content || 'New chat').replace(/\s+/g, ' ').trim();
+  return text.length > 60 ? `${text.slice(0, 57)}…` : text || 'New chat';
+}
+
+function relativeTime(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 60_000) return 'now';
+  const m = Math.round(ms / 60_000);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
+}
+
+/** Reads an SSE response, calling onEvent per JSON event. True when the server sent [DONE]. */
+async function readEventStream(res: Response, onEvent: (ev: any) => void): Promise<boolean> {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return false;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const payload = line.slice(6).trim();
+      if (payload === '[DONE]') return true;
+      let ev: any;
+      try { ev = JSON.parse(payload); } catch { continue; }
+      // Only a stream-level error stops it; a failed tool or post carries its own `error`.
+      if (ev?.error && (!ev.type || ev.type === 'error')) throw new Error(ev.error);
+      onEvent(ev);
+    }
+  }
+}
 
 const NUMBER_WORDS: Record<string, number> = {
   two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
@@ -623,9 +690,10 @@ function ActivityCard({ msg }: { msg: ActivityMessage }) {
   const current = msg.steps[msg.steps.length - 1] ?? 'Starting';
   const working = msg.status === 'working';
   const hasDetail = msg.steps.length > 1 || Boolean(msg.thinking);
-  const postLine = msg.postsTotal
-    ? `${Math.min(msg.postsDone, msg.postsTotal)} of ${msg.postsTotal} posts`
-    : msg.postsDone > 0 ? `${msg.postsDone} post${msg.postsDone === 1 ? '' : 's'} saved` : '';
+  // Only once a post exists: a batch reports its own progress in its card.
+  const postLine = msg.postsDone === 0 ? ''
+    : msg.postsTotal ? `${Math.min(msg.postsDone, msg.postsTotal)} of ${msg.postsTotal} posts`
+      : `${msg.postsDone} post${msg.postsDone === 1 ? '' : 's'} saved`;
 
   return (
     <div className={`rounded-xl border px-3 py-2 text-xs ${msg.status === 'failed' ? 'border-red-100 bg-red-50/60' : 'border-slate-200 bg-white'}`}>
@@ -671,6 +739,93 @@ function ActivityCard({ msg }: { msg: ActivityMessage }) {
               {msg.thinking}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EstimateCard({ msg, busy, onProceed, onCancel }: { msg: EstimateMessage; busy: boolean; onProceed: () => void; onCancel: () => void }) {
+  const short = msg.balance !== null && msg.balance < msg.credits;
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2.5 text-xs">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-semibold text-slate-800">{msg.label}</p>
+          {msg.lines.map((l) => <p key={l} className="text-[11px] text-slate-500">{l}</p>)}
+        </div>
+        <div className="shrink-0 text-right">
+          <p className="text-sm font-bold tabular-nums text-slate-900">{msg.credits}</p>
+          <p className="text-[10px] uppercase tracking-wide text-slate-500">credits</p>
+        </div>
+      </div>
+      {msg.balance !== null && (
+        <p className={`mt-1 text-[11px] ${short ? 'text-red-600' : 'text-slate-500'}`}>
+          Balance {msg.balance} → {Math.max(0, msg.balance - msg.credits)} after this{short ? ' — not enough credits to finish' : ''}
+        </p>
+      )}
+      {msg.status === 'pending' ? (
+        <div className="mt-2 flex gap-2">
+          <button type="button" disabled={busy} onClick={onProceed}
+            className="rounded-lg bg-indigo-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">Proceed</button>
+          <button type="button" disabled={busy} onClick={onCancel}
+            className="rounded-lg bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-50">Cancel</button>
+        </div>
+      ) : (
+        <p className={`mt-1.5 text-[11px] font-medium ${msg.status === 'failed' ? 'text-red-600' : msg.status === 'cancelled' ? 'text-slate-400' : 'text-emerald-700'}`}>
+          {msg.status === 'running' ? 'Running…' : msg.status === 'done' ? '✓ Approved' : msg.status === 'cancelled' ? 'Cancelled — nothing was charged' : msg.error || 'Failed'}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function BatchCard({ msg }: { msg: BatchMessage }) {
+  const [openIdx, setOpenIdx] = useState<number | null>(null);
+  const done = msg.items.filter((i) => i.status === 'done').length;
+  const failed = msg.items.filter((i) => i.status === 'failed').length;
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white text-xs">
+      <div className="border-b border-slate-100 px-3 py-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-semibold text-slate-700">
+            {msg.status === 'running' ? 'Writing posts' : 'Posts on your calendar'} · {done} of {msg.total}
+          </span>
+          <span className="tabular-nums text-slate-500">{msg.creditsUsed} credits used</span>
+        </div>
+        <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
+          <div className="h-full rounded-full bg-indigo-500 transition-all duration-500" style={{ width: `${msg.total ? ((done + failed) / msg.total) * 100 : 0}%` }} />
+        </div>
+        {msg.stopped && <p className="mt-1 text-[11px] text-red-600">{msg.stopped}</p>}
+      </div>
+      <ul className="max-h-64 divide-y divide-slate-100 overflow-y-auto">
+        {msg.items.map((item) => (
+          <li key={item.index} className="px-3 py-1.5">
+            <button type="button" className="flex w-full items-center gap-2 text-left" disabled={item.status !== 'done'}
+              onClick={() => setOpenIdx((o) => (o === item.index ? null : item.index))}>
+              {item.status === 'writing' ? <Loader2 size={12} className="shrink-0 animate-spin text-indigo-500" />
+                : item.status === 'done' ? <CheckCircle size={12} className="shrink-0 text-emerald-500" />
+                  : item.status === 'failed' ? <X size={12} className="shrink-0 text-red-500" />
+                    : <Clock size={12} className="shrink-0 text-slate-300" />}
+              <span className={`min-w-0 flex-1 truncate ${item.status === 'done' ? 'font-medium text-slate-800' : 'text-slate-500'}`}>
+                {item.post?.title || item.topic}
+              </span>
+              {item.post?.scheduled_at && (
+                <span className="shrink-0 text-[10.5px] text-slate-400">
+                  {new Date(item.post.scheduled_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                </span>
+              )}
+            </button>
+            {item.status === 'failed' && item.error && <p className="pl-5 text-[10.5px] text-red-500">{item.error}</p>}
+            {openIdx === item.index && item.post?.content && (
+              <p className="mt-1 whitespace-pre-wrap rounded-lg bg-slate-50 px-2 py-1.5 pl-2 text-[11px] leading-relaxed text-slate-600">{item.post.content}</p>
+            )}
+          </li>
+        ))}
+      </ul>
+      {done > 0 && (
+        <div className="border-t border-slate-100 px-3 py-1.5 text-right">
+          <a href="/posts" className="text-[11px] font-semibold text-indigo-600 hover:underline">Open in Posts →</a>
         </div>
       )}
     </div>
@@ -893,9 +1048,25 @@ const SUGGESTIONS = [
 
 export default function ChatWidget() {
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
+  // Every chat session's messages, keyed by session id; the open one is `activeId`.
+  // A session keeps running (and updating its own messages) while another is open.
+  const [activeId, setActiveId] = useState<string>(() => {
+    try { return localStorage.getItem('daky_chat_active') || crypto.randomUUID(); } catch { return crypto.randomUUID(); }
+  });
+  const [store, setStore] = useState<Record<string, Message[]>>({});
+  const [runningIds, setRunningIds] = useState<Record<string, boolean>>({});
+  const [sessionList, setSessionList] = useState<SessionMeta[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const savedRef = useRef<Record<string, string>>({});
+  const loadedRef = useRef<Record<string, boolean>>({});
+
+  const setMessagesFor = useCallback((sid: string) => (u: Message[] | ((prev: Message[]) => Message[])) =>
+    setStore((st) => ({ ...st, [sid]: typeof u === 'function' ? u(st[sid] ?? []) : u })), []);
+  const setLoadingFor = useCallback((sid: string) => (v: boolean) => setRunningIds((r) => ({ ...r, [sid]: v })), []);
+  const messages = store[activeId] ?? NO_MESSAGES;
+  const setMessages = setMessagesFor(activeId);
+  const loading = Boolean(runningIds[activeId]);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
   const [attachedImages, setAttachedImages] = useState<AttachedImg[]>([]);
 
   // recording: 'idle' | 'recording' | 'pending'
@@ -919,6 +1090,10 @@ export default function ChatWidget() {
     const imgs = imgsOverride ?? attachedImages;
     // A retry sends from the conversation as it was before the failed turn.
     const prior = base ?? messages;
+    // Bound to the session this message was sent in, so switching chats mid-reply is safe.
+    const sid = activeId;
+    const setMessages = setMessagesFor(sid);
+    const setLoading = setLoadingFor(sid);
 
     // Client-side intercept: if user manually types "schedule it/the post" and there's a draft, show scheduler
     if (/^schedule\b/i.test(rawText) && !imgsOverride) {
@@ -965,6 +1140,10 @@ export default function ChatWidget() {
       updateActivity((a) => (a.steps[a.steps.length - 1] === step ? a : { ...a, steps: [...a.steps, step].slice(-30) }));
 
     setMessages([...prior, userMsg, activity, { kind: 'text', id: assistantId, role: 'assistant', content: '' }]);
+    setSessionList((list) => {
+      const meta = { id: sid, title: sessionTitle([...prior, userMsg]), updated_at: new Date().toISOString() };
+      return [meta, ...list.filter((x) => x.id !== sid)];
+    });
     setInput('');
     setAttachedImages([]);
     setRecordingState('idle');
@@ -1041,7 +1220,7 @@ export default function ChatWidget() {
           if (payload === '[DONE]') { finished = true; notifyCreditsChanged(); break; }
           try {
             const ev = JSON.parse(payload) as any;
-            if (ev.error) throw new Error(ev.error);
+            if (ev.error && (!ev.type || ev.type === 'error')) throw new Error(ev.error);
             if (ev.type === 'status' && ev.text) {
               addStep(String(ev.text));
             } else if (ev.type === 'thinking' && ev.text) {
@@ -1050,6 +1229,17 @@ export default function ChatWidget() {
               setMessages((prev) =>
                 prev.map((m) => m.id === assistantId && m.kind === 'text' ? { ...m, content: m.content + ev.text } : m),
               );
+            } else if (ev.type === 'estimate') {
+              addStep(`Estimated ${ev.credits} credits — waiting for your OK`);
+              setMessages((prev) => [
+                ...prev.filter((m) => !(m.kind === 'text' && m.id === assistantId && m.content === '')),
+                {
+                  kind: 'estimate', id: `estimate-${ev.action_id}`, actionId: String(ev.action_id), label: String(ev.label || 'Paid action'),
+                  credits: Number(ev.credits) || 0, lines: Array.isArray(ev.lines) ? ev.lines.map(String) : [],
+                  balance: typeof ev.balance === 'number' ? ev.balance : null, status: 'pending',
+                } satisfies EstimateMessage,
+                { kind: 'text', id: assistantId, role: 'assistant', content: '' },
+              ]);
             } else if (ev.type === 'tool_start') {
               addStep(String(ev.label || ev.name).replace(/…$/, ''));
               const toolId = `tool-${ev.name}-${Date.now()}`;
@@ -1120,7 +1310,7 @@ export default function ChatWidget() {
         });
       }, 60);
     }
-  }, [input, loading, messages, attachedImages]);
+  }, [input, loading, messages, attachedImages, activeId, setMessagesFor, setLoadingFor]);
 
   /** Sends the user message behind a failed reply again, from the conversation as it was before it. */
   const retry = useCallback((failedId: string) => {
@@ -1142,6 +1332,8 @@ export default function ChatWidget() {
   const executePlan = useCallback(async (planId: string, planAgents: PlanAgent[]) => {
     const planMsg = messages.find((m) => m.id === planId) as PlanMessage | undefined;
     if (!planMsg) return;
+    const setMessages = setMessagesFor(activeId);
+    const setLoading = setLoadingFor(activeId);
     const token = localStorage.getItem('auth_token');
     const history = messages.filter((m): m is TextMessage => m.kind === 'text').map(({ role, content }) => ({ role, content }));
 
@@ -1196,11 +1388,145 @@ export default function ChatWidget() {
       setLoading(false);
       abortRef.current = null;
     }
-  }, [messages]);
+  }, [messages, activeId, setMessagesFor, setLoadingFor]);
 
   const cancelPlan = useCallback((planId: string) => {
     setMessages((prev) => prev.filter((m) => m.id !== planId));
+  }, [setMessages]);
+
+  // ── Credit estimates: Proceed runs the parked action, Cancel drops it ───────
+
+  const runAction = useCallback(async (estimateId: string) => {
+    const est = messages.find((m): m is EstimateMessage => m.id === estimateId && m.kind === 'estimate');
+    if (!est || est.status !== 'pending' || loading) return;
+    const sid = activeId;
+    const setMessages = setMessagesFor(sid);
+    const setLoading = setLoadingFor(sid);
+    const patchEstimate = (patch: Partial<EstimateMessage>) =>
+      setMessages((prev) => prev.map((m) => (m.id === estimateId && m.kind === 'estimate' ? { ...m, ...patch } : m)));
+    const batchId = `batch-${est.actionId}`;
+    const patchBatch = (fn: (b: BatchMessage) => BatchMessage) =>
+      setMessages((prev) => prev.map((m) => (m.id === batchId && m.kind === 'batch' ? fn(m) : m)));
+
+    patchEstimate({ status: 'running' });
+    setLoading(true);
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/api/ai/chat/actions/${encodeURIComponent(est.actionId)}/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('auth_token')}` },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as any)?.error || 'Could not start this action');
+      }
+      const finished = await readEventStream(res, (ev) => {
+        if (ev.type === 'batch_start') {
+          const total = Number(ev.total) || 0;
+          setMessages((prev) => [...prev, {
+            kind: 'batch', id: batchId, total, creditsUsed: 0, status: 'running',
+            items: Array.from({ length: total }, (_, index) => ({ index, topic: '', status: 'queued' as const })),
+          } satisfies BatchMessage]);
+        } else if (ev.type === 'batch_item') {
+          patchBatch((b) => ({
+            ...b,
+            creditsUsed: b.creditsUsed + (ev.status === 'done' ? Number(ev.credits_used) || 0 : 0),
+            items: b.items.map((it) => (it.index === ev.index ? { ...it, topic: ev.topic || it.topic, status: ev.status, post: ev.post ?? it.post, error: ev.error } : it)),
+          }));
+          // Each post is charged as it is saved: the header balance follows along.
+          if (ev.status === 'done') notifyCreditsChanged();
+        } else if (ev.type === 'batch_done') {
+          patchBatch((b) => ({ ...b, status: 'done', stopped: ev.stopped }));
+        } else if (ev.type === 'tool_start') {
+          setMessages((prev) => [...prev, { kind: 'tool', id: `tool-${ev.name}-${Date.now()}`, name: ev.name, label: ev.label, status: 'running' } satisfies ToolMessage]);
+        } else if (ev.type === 'tool_done') {
+          setMessages((prev) => prev.map((m) => (m.kind === 'tool' && m.name === ev.name && m.status === 'running'
+            ? { ...m, status: ev.success ? 'done' : 'error', result: ev.result, error: ev.error } : m)));
+        } else if (ev.type === 'credits_changed') {
+          notifyCreditsChanged();
+        }
+      });
+      if (!finished) throw new Error('The connection dropped — check Posts for what was already made.');
+      patchEstimate({ status: 'done' });
+    } catch (err: any) {
+      patchEstimate({ status: 'failed', error: err?.message || 'Failed' });
+      patchBatch((b) => ({ ...b, status: 'done' }));
+    } finally {
+      setLoading(false);
+      notifyCreditsChanged();
+    }
+  }, [messages, loading, activeId, setMessagesFor, setLoadingFor]);
+
+  const cancelAction = useCallback((estimateId: string) => {
+    const est = messages.find((m): m is EstimateMessage => m.id === estimateId && m.kind === 'estimate');
+    if (!est || est.status !== 'pending') return;
+    setMessages((prev) => prev.map((m) => (m.id === estimateId && m.kind === 'estimate' ? { ...m, status: 'cancelled' } : m)));
+    void fetch(`${getApiBaseUrl()}/api/ai/chat/actions/${encodeURIComponent(est.actionId)}/cancel`, {
+      method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` },
+    }).catch(() => undefined);
+  }, [messages, setMessages]);
+
+  // ── Sessions: history list, open, new, delete, autosave ──────────────────
+
+  const authHeaders = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('auth_token')}` });
+
+  const openSession = useCallback(async (sid: string) => {
+    setActiveId(sid);
+    setShowHistory(false);
+    if (store[sid] || loadedRef.current[sid]) return;
+    loadedRef.current[sid] = true;
+    try {
+      const r = await fetch(`${getApiBaseUrl()}/api/ai/chat/sessions/${encodeURIComponent(sid)}`, { headers: authHeaders() });
+      if (!r.ok) return;
+      const data = await r.json();
+      const msgs: Message[] = Array.isArray(data?.session?.messages) ? data.session.messages : [];
+      savedRef.current[sid] = JSON.stringify(msgs);
+      setStore((st) => (st[sid] ? st : { ...st, [sid]: msgs }));
+    } catch { loadedRef.current[sid] = false; }
+  }, [store]);
+
+  const newChat = useCallback(() => {
+    setActiveId(crypto.randomUUID());
+    setShowHistory(false);
+    setInput('');
+    setAttachedImages([]);
   }, []);
+
+  const deleteSession = useCallback((sid: string) => {
+    setSessionList((list) => list.filter((x) => x.id !== sid));
+    setStore((st) => { const next = { ...st }; delete next[sid]; return next; });
+    if (sid === activeId) setActiveId(crypto.randomUUID());
+    void fetch(`${getApiBaseUrl()}/api/ai/chat/sessions/${encodeURIComponent(sid)}`, { method: 'DELETE', headers: authHeaders() }).catch(() => undefined);
+  }, [activeId]);
+
+  useEffect(() => { try { localStorage.setItem('daky_chat_active', activeId); } catch { /* private mode */ } }, [activeId]);
+
+  // The history list loads once the chat is first opened; the last open chat is reopened.
+  const listLoaded = useRef(false);
+  useEffect(() => {
+    if (!open || listLoaded.current) return;
+    listLoaded.current = true;
+    void openSession(activeId);
+    fetch(`${getApiBaseUrl()}/api/ai/chat/sessions`, { headers: authHeaders() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (Array.isArray(d?.sessions)) setSessionList((cur) => [...cur, ...d.sessions.filter((x: SessionMeta) => !cur.some((c) => c.id === x.id))]); })
+      .catch(() => undefined);
+  }, [open, activeId, openSession]);
+
+  // Autosave: a session is saved shortly after it changes, once it is not mid-reply.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      for (const [sid, msgs] of Object.entries(store)) {
+        if (runningIds[sid] || !msgs.length) continue;
+        const json = JSON.stringify(msgs);
+        if (savedRef.current[sid] === json) continue;
+        savedRef.current[sid] = json;
+        void fetch(`${getApiBaseUrl()}/api/ai/chat/sessions/${encodeURIComponent(sid)}`, {
+          method: 'PUT', headers: authHeaders(), body: JSON.stringify({ title: sessionTitle(msgs), messages: msgs }),
+        }).catch(() => { delete savedRef.current[sid]; });
+      }
+    }, 800);
+    return () => clearTimeout(t);
+  }, [store, runningIds]);
 
   // ── Form submit ───────────────────────────────────────────────────────────
 
@@ -1304,6 +1630,11 @@ export default function ChatWidget() {
         aria-label="Open Daky AI assistant"
       >
         <Sparkles size={20} className="text-white" />
+        {!open && Object.values(runningIds).some(Boolean) && (
+          <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-white shadow" aria-label="Daky is working">
+            <Loader2 size={11} className="animate-spin text-indigo-600" />
+          </span>
+        )}
       </button>
 
       {/* Chat panel */}
@@ -1321,8 +1652,15 @@ export default function ChatWidget() {
                 <span className="h-1.5 w-1.5 rounded-full bg-positive" /> ACTIVE
               </div>
             </div>
-            <button type="button" className="flex h-6 w-6 items-center justify-center rounded-md text-faint hover:bg-soft hover:text-ink" aria-label="Settings">
-              <Settings size={13} />
+            <button type="button" onClick={() => setShowHistory((v) => !v)} title="Chat history"
+              className={`relative flex h-6 w-6 items-center justify-center rounded-md hover:bg-soft hover:text-ink ${showHistory ? 'bg-soft text-ink' : 'text-faint'}`} aria-label="Chat history">
+              <History size={13} />
+              {Object.entries(runningIds).some(([id, on]) => on && id !== activeId) && (
+                <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-500" />
+              )}
+            </button>
+            <button type="button" onClick={newChat} title="New chat" className="flex h-6 w-6 items-center justify-center rounded-md text-faint hover:bg-soft hover:text-ink" aria-label="New chat">
+              <Plus size={13} />
             </button>
             <button type="button" onClick={() => setOpen(false)} className="flex h-6 w-6 items-center justify-center rounded-md text-faint hover:bg-soft hover:text-ink" aria-label="Close">
               <X size={13} />
@@ -1331,7 +1669,43 @@ export default function ChatWidget() {
 
           {/* Body */}
           <div className="flex-1 overflow-y-auto">
-            {!hasMessages ? (
+            {showHistory ? (
+              <div className="px-2 py-2">
+                <button type="button" onClick={newChat}
+                  className="mb-2 flex w-full items-center gap-2 rounded-[10px] border border-dashed border-line px-3 py-2 text-xs font-medium text-ink hover:border-blue hover:bg-pale/50">
+                  <Plus size={13} /> New chat
+                </button>
+                {(() => {
+                  const list = [...sessionList];
+                  if (store[activeId]?.length && !list.some((x) => x.id === activeId)) list.unshift({ id: activeId, title: sessionTitle(store[activeId]), updated_at: new Date().toISOString() });
+                  if (!list.length) return <p className="px-2 py-6 text-center text-xs text-muted">No chats yet.</p>;
+                  return (
+                    <ul className="space-y-0.5">
+                      {list.map((x) => {
+                        const running = Boolean(runningIds[x.id]);
+                        return (
+                          <li key={x.id} className={`group flex items-center gap-2 rounded-lg px-2 py-1.5 ${x.id === activeId ? 'bg-pale' : 'hover:bg-soft'}`}>
+                            <button type="button" onClick={() => void openSession(x.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                              {running
+                                ? <Loader2 size={12} className="shrink-0 animate-spin text-indigo-500" aria-label="Working" />
+                                : <span className="h-3 w-3 shrink-0" />}
+                              <span className="min-w-0 flex-1 truncate text-xs text-ink">{x.title}</span>
+                              <span className="shrink-0 text-[10px] text-faint">{running ? 'working' : relativeTime(x.updated_at)}</span>
+                            </button>
+                            {!running && (
+                              <button type="button" onClick={() => deleteSession(x.id)} aria-label="Delete chat"
+                                className="hidden h-5 w-5 shrink-0 items-center justify-center rounded text-faint hover:text-red-500 group-hover:flex">
+                                <Trash2 size={11} />
+                              </button>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  );
+                })()}
+              </div>
+            ) : !hasMessages ? (
               <div className="flex flex-col items-center px-4 pt-5 pb-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-pale mb-3">
                   <Sparkles size={18} className="text-blue" />
@@ -1358,6 +1732,12 @@ export default function ChatWidget() {
                   <div key={msg.id}>
                     {msg.kind === 'activity' ? (
                       <div className="pl-8"><ActivityCard msg={msg} /></div>
+                    ) : msg.kind === 'estimate' ? (
+                      <div className="pl-8">
+                        <EstimateCard msg={msg} busy={loading} onProceed={() => void runAction(msg.id)} onCancel={() => cancelAction(msg.id)} />
+                      </div>
+                    ) : msg.kind === 'batch' ? (
+                      <div className="pl-8"><BatchCard msg={msg} /></div>
                     ) : msg.kind === 'tool' ? (
                       <div className="pl-8"><ToolCard msg={msg} /></div>
                     ) : msg.kind === 'form' ? (
