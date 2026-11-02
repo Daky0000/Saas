@@ -396,8 +396,8 @@ function Auth({ onLogin }: AuthProps) {
       setErrorMessage('Please enter a valid email address.');
       return;
     }
-    if (signupPassword.length < 6) {
-      setErrorMessage('Password must be at least 6 characters.');
+    if (signupPassword.length < 8) {
+      setErrorMessage('Password must be at least 8 characters.');
       return;
     }
     if (!acceptTerms) {
@@ -406,24 +406,23 @@ function Auth({ onLogin }: AuthProps) {
     }
     setIsSubmitting(true);
     try {
-      const username = signupEmail
-        .split('@')[0]
-        .toLowerCase()
-        .replace(/[^a-z0-9_]/g, '_');
+      // No username: the server picks a free one from the email.
       const r = await fetch(`${API_BASE_URL}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: signupName.trim(),
-          username,
           email: signupEmail.trim(),
           password: signupPassword,
         }),
       });
       const { data: d, rawText } = await safeJson<AuthResponse>(r);
       if (!d) throw new Error(`Server error (${r.status}): ${rawText.slice(0, 200) || 'empty'}`);
-      if (!r.ok || !d.success || !d.token || !d.user?.id || !d.user?.email)
-        throw new Error(d.error || 'Account creation failed');
+      if (!r.ok || !d.success || !d.token || !d.user?.id || !d.user?.email) {
+        // "Validation failed" alone tells nobody what to fix; show the field's reason.
+        const issue = (d as { issues?: Array<{ message?: string }> }).issues?.[0]?.message;
+        throw new Error(issue || d.error || 'Account creation failed');
+      }
       localStorage.setItem('auth_token', d.token);
       onLogin(
         normalizeUser({
@@ -704,7 +703,7 @@ function Auth({ onLogin }: AuthProps) {
               <input
                 id="su-password"
                 type={showSignupPwd ? 'text' : 'password'}
-                placeholder="At least 6 characters"
+                placeholder="At least 8 characters"
                 value={signupPassword}
                 onChange={(e) => setSignupPassword(e.target.value)}
                 autoComplete="new-password"

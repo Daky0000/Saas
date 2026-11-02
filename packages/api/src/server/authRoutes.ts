@@ -14,10 +14,28 @@ import { validateBody } from '../middleware/validate.ts';
 
 const authRegisterSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8).max(72, { message: 'Password must be at most 72 characters (bcrypt limitation)' }),
+  password: z.string().min(8, { message: 'Password must be at least 8 characters' }).max(72, { message: 'Password must be at most 72 characters (bcrypt limitation)' }),
   name: z.string().min(1).max(100),
-  username: z.string().min(3).max(32).regex(/^[a-zA-Z0-9_-]+$/),
+  // Optional: the sign-up form has no username field, so the server picks one.
+  username: z.string().min(3).max(32).regex(/^[a-zA-Z0-9_-]+$/).optional(),
 });
+
+/**
+ * A free username derived from the email's local part: "dan@x.com" → "dan",
+ * then "dan_4821"-style suffixes while it is taken, then a random fallback.
+ * Two people with the same mailbox name on different domains must both be
+ * able to sign up.
+ */
+export async function allocateUsername(email: string, isTaken: (username: string) => Promise<boolean>): Promise<string> {
+  let base = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^[_-]+|[_-]+$/g, '').slice(0, 24);
+  if (base.length < 3) base = base ? `${base}_user` : 'user'; // the username rule needs 3+ characters
+  if (!(await isTaken(base))) return base;
+  for (let i = 0; i < 6; i++) {
+    const candidate = `${base}_${1000 + Math.floor(Math.random() * 9000)}`;
+    if (!(await isTaken(candidate))) return candidate;
+  }
+  return `user_${randomUUID().replace(/-/g, '').slice(0, 10)}`;
+}
 
 const authLoginSchema = z
   .object({
@@ -144,16 +162,21 @@ export function registerAuthRoutes(deps: AuthDeps): Router {
 
   router.post('/auth/register', authLimiter, validateBody(authRegisterSchema), async (req: Request, res: Response) => {
     try {
-      const { email, password, name, username } = req.body;
-      if (!email || !password || !name || !username) {
-        return res.status(400).json({ success: false, error: 'Name, username, email, and password are required' });
+      const { email, password, name } = req.body;
+      if (!email || !password || !name) {
+        return res.status(400).json({ success: false, error: 'Name, email, and password are required' });
       }
 
       const existing = await findUserByEmail(email);
-      if (existing) return res.status(400).json({ success: false, error: 'Account already exists' });
+      if (existing) return res.status(400).json({ success: false, error: 'An account with this email already exists — sign in instead' });
 
-      const existingUsername = await findUserByUsername(username);
-      if (existingUsername) return res.status(400).json({ success: false, error: 'Username is already in use' });
+      // A username the caller chose is honoured or refused; without one, the
+      // server picks a free one (the form never asks for it).
+      const requested = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+      if (requested && (await findUserByUsername(requested))) {
+        return res.status(400).json({ success: false, error: 'Username is already in use' });
+      }
+      const username = requested || await allocateUsername(email, async (u) => Boolean(await findUserByUsername(u)));
 
       const user = await createUser(name, username, email, password);
       provisionUserAgents(user.id).catch(() => undefined);
