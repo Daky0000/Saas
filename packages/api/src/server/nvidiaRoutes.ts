@@ -7,7 +7,7 @@ import { recordAuditLog } from '../link-metadata.ts';
 import { encryptPlatformConfig, decryptPlatformConfig } from '../integration-helpers.ts';
 import {
   DEFAULT_LADDERS, FREE_MODELS, IMAGE_MODELS, LADDER_MAX,
-  getNvidiaConfig, invalidateNvidiaConfig, nvidiaAgentLoop, nvidiaChat, nvidiaImage, type NvidiaConfig,
+  discoverModels, getNvidiaConfig, invalidateNvidiaConfig, liveLadder, nvidiaImage, refreshNvidiaModels, type NvidiaConfig,
 } from './nvidiaModels.ts';
 
 // Admin → NVIDIA: the key, the on/off switch for the free tier, and which free
@@ -73,6 +73,7 @@ export function registerNvidiaRoutes({ requireAdmin, hasDatabase, pool }: Deps):
         [JSON.stringify(encryptPlatformConfig(next))],
       );
       invalidateNvidiaConfig();
+      void refreshNvidiaModels(); // a new key may reach different models
       void recordAuditLog((admin as any).id, 'admin_provider_key_updated', [], { platform: 'nvidia', fields: Object.keys(b) });
       return res.json(view(await getNvidiaConfig(true)));
     } catch (e: any) {
@@ -81,43 +82,26 @@ export function registerNvidiaRoutes({ requireAdmin, hasDatabase, pool }: Deps):
     }
   });
 
-  // Asks every model in the text and fast ladders one tiny question, each on
-  // its own, so the result says which rung answers — not just that one did.
+  // Probes every candidate free model (and the saved ladders) once, then
+  // rebuilds the ladders from the ones that answered — so a model NVIDIA has
+  // retired drops out here, and in every call, without a deploy.
   router.post('/admin/nvidia/test', async (req: Request, res: Response) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
     const cfg = await getNvidiaConfig(true);
     if (!cfg.apiKey) return res.status(400).json({ success: false, error: 'No NVIDIA key is set.' });
-    const models = [...new Set([...cfg.ladders.text, ...cfg.ladders.fast])];
-    const results = await Promise.all(models.map(async (model) => {
-      const started = Date.now();
-      try {
-        const r = await nvidiaChat({
-          system: 'Answer with the single word OK.', user: 'Reply OK.', maxTokens: 16, job: 'text',
-          config: { ...cfg, ladders: { ...cfg.ladders, text: [model] } },
-        });
-        return { model, ok: true, ms: Date.now() - started, reply: r.text.slice(0, 40) };
-      } catch (e: any) {
-        return { model, ok: false, ms: Date.now() - started, error: e?.attempts?.[0]?.error || e?.message || 'failed' };
-      }
-    }));
-    // Agents need tool calling, so each agent model must actually call one.
-    const toolResults = await Promise.all(cfg.ladders.agent.map(async (model) => {
-      const started = Date.now();
-      let called = false;
-      const r = await nvidiaAgentLoop({
-        system: 'You test tool calling. Call the get_time tool exactly once, then reply with the single word DONE.',
-        history: [{ role: 'user', content: 'What time is it? Use the tool.' }],
-        tools: [{ name: 'get_time', description: 'Returns the current time.', input_schema: { type: 'object', properties: {}, additionalProperties: false } }],
-        executeTool: async () => { called = true; return { time: new Date().toISOString() }; },
-        maxIterations: 3, maxTokens: 64,
-        config: { ...cfg, ladders: { ...cfg.ladders, agent: [model] } },
+    try {
+      const found = await discoverModels({ config: cfg });
+      const results = found.results.map(({ tools: _t, toolError: _e, ...r }) => r);
+      const toolResults = found.results.filter((r) => r.ok && r.tools !== undefined)
+        .map((r) => (r.tools ? { model: r.model, ok: true, ms: r.ms, reply: 'called a tool' } : { model: r.model, ok: false, ms: r.ms, error: r.toolError }));
+      return res.json({
+        success: results.some((r) => r.ok), results, toolResults,
+        liveLadders: { text: liveLadder(cfg, 'text'), fast: liveLadder(cfg, 'fast'), agent: liveLadder(cfg, 'agent') },
       });
-      return r.ok && called
-        ? { model, ok: true, ms: Date.now() - started, reply: 'called a tool' }
-        : { model, ok: false, ms: Date.now() - started, error: r.ok ? 'answered without calling the tool' : (r.attempts[0]?.error || r.error) };
-    }));
-    return res.json({ success: results.some((r) => r.ok), results, toolResults });
+    } catch (e: any) {
+      return res.status(502).json({ success: false, error: e?.message || 'Test failed' });
+    }
   });
 
   // One small picture through the image ladder, returned for preview.

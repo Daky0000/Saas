@@ -33,6 +33,7 @@ export default function AdminNvidia() {
   const [testing, setTesting] = useState(false);
   const [results, setResults] = useState<TestResult[] | null>(null);
   const [toolResults, setToolResults] = useState<TestResult[] | null>(null);
+  const [liveLadders, setLiveLadders] = useState<Omit<Ladders, 'image'> | null>(null);
   const [imgTesting, setImgTesting] = useState(false);
   const [imgResult, setImgResult] = useState<{ ok: boolean; text: string; preview?: string } | null>(null);
 
@@ -56,11 +57,17 @@ export default function AdminNvidia() {
   }
 
   async function runTest() {
-    setTesting(true); setResults(null); setToolResults(null);
+    setTesting(true); setResults(null); setToolResults(null); setLiveLadders(null);
     try {
       const r = await fetch(`${getApiBaseUrl()}/api/admin/nvidia/test`, { method: 'POST', headers });
       const d = await r.json();
-      if (Array.isArray(d.results)) { setResults(d.results); setToolResults(Array.isArray(d.toolResults) ? d.toolResults : null); }
+      if (Array.isArray(d.results)) {
+        // Working models first: the list is every candidate, and most of NVIDIA's catalogue comes and goes.
+        const byOk = (a: TestResult, b: TestResult) => Number(b.ok) - Number(a.ok) || a.ms - b.ms;
+        setResults([...d.results].sort(byOk));
+        setToolResults(Array.isArray(d.toolResults) ? [...d.toolResults].sort(byOk) : null);
+        setLiveLadders(d.liveLadders ?? null);
+      }
       else setMsg({ ok: false, text: d.error ?? 'Test failed' });
     } catch (e: any) { setMsg({ ok: false, text: e.message }); } finally { setTesting(false); }
   }
@@ -124,12 +131,21 @@ export default function AdminNvidia() {
 
         <div className="mt-4 flex flex-wrap gap-2">
           <button type="button" disabled={testing || !cfg.hasKey} onClick={() => void runTest()} className={`${btn} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50`}>
-            {testing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Test every model
+            {testing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} {testing ? 'Checking every free model…' : 'Test every model'}
           </button>
           <button type="button" disabled={imgTesting || !cfg.hasKey} onClick={() => void runImageTest()} className={`${btn} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50`}>
             {imgTesting ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} />} Test image
           </button>
         </div>
+        {liveLadders && (
+          <div className="mt-3 rounded-xl border border-[#76B900]/30 bg-white p-3 text-xs space-y-1">
+            <p className="font-semibold text-slate-700">Now in use (only models that answered)</p>
+            {(Object.keys(liveLadders) as Array<keyof typeof liveLadders>).map((job) => (
+              <p key={job} className="text-slate-600"><span className="font-semibold">{LADDER_INFO[job].label}:</span>{' '}
+                {liveLadders[job].length ? <span className="font-mono">{liveLadders[job].join(' → ')}</span> : <span className="text-red-500">none answered — the paid key is used</span>}</p>
+            ))}
+          </div>
+        )}
         {results && (
           <div className="mt-3 space-y-1">
             {results.map((r) => (

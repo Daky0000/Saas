@@ -33,11 +33,18 @@ export const NVCF_BASE = () => (process.env.NVCF_BASE_URL || 'https://api.nvcf.n
 export interface FreeModel { id: string; name: string; reasoning: boolean; vision: boolean; down?: string }
 
 export const FREE_MODELS: FreeModel[] = [
-  { id: 'moonshotai/kimi-k3', name: 'Kimi K3', reasoning: true, vision: true },
-  { id: 'nvidia/nemotron-3-super-120b-a12b', name: 'Nemotron 3 Super 120B', reasoning: true, vision: false },
+  { id: 'moonshotai/kimi-k2.6', name: 'Kimi K2.6', reasoning: true, vision: true },
+  { id: 'deepseek-ai/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', reasoning: true, vision: false },
+  { id: 'nvidia/nemotron-3-ultra-550b-a55b', name: 'Nemotron 3 Ultra 550B', reasoning: true, vision: false },
+  { id: 'nvidia/nemotron-3.5-lightning-30b-a3b', name: 'Nemotron 3.5 Lightning 30B', reasoning: true, vision: false },
+  { id: 'nvidia/nemotron-3.5-super-vl-120b-a12b', name: 'Nemotron 3.5 Super VL 120B', reasoning: true, vision: true },
+  { id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash', reasoning: true, vision: false },
+  { id: 'minimaxai/minimax-m3.1-flash', name: 'MiniMax M3.1 Flash', reasoning: true, vision: false },
+  { id: 'mistralai/mistral-large-4-1t-a52b', name: 'Mistral Large 4', reasoning: false, vision: false },
+  { id: 'nvidia/nemotron-nano-3-30b-a3b', name: 'Nemotron Nano 3 30B', reasoning: true, vision: false },
+  { id: 'nvidia/nemotron-3-super-120b-a12b', name: 'Nemotron 3 Super 120B', reasoning: true, vision: false, down: '404 "Function not found for account" on 2 Nov 2026' },
   { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', name: 'Nemotron 3 Nano Omni', reasoning: true, vision: true },
-  { id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B', reasoning: true, vision: false },
-  { id: 'openai/gpt-oss-20b', name: 'GPT-OSS 20B', reasoning: true, vision: false },
+  { id: 'openai/gpt-oss-20b', name: 'GPT-OSS 20B', reasoning: true, vision: false, down: 'timed out after 60 s on 2 Nov 2026' },
   { id: 'google/diffusiongemma-26b-a4b-it', name: 'DiffusionGemma 26B', reasoning: false, vision: true },
   { id: 'meta/llama-3.2-90b-vision-instruct', name: 'Llama 3.2 90B Vision', reasoning: false, vision: true },
   { id: 'google/gemma-4-31b-it', name: 'Gemma 4 31B', reasoning: true, vision: true, down: '504 on every request when last checked' },
@@ -62,11 +69,13 @@ export const IMAGE_MODELS: ImageModel[] = [
 export type NvidiaJob = 'text' | 'fast' | 'agent';
 
 export const DEFAULT_LADDERS: Record<NvidiaJob | 'image', string[]> = {
-  text: ['moonshotai/kimi-k3', 'nvidia/nemotron-3-super-120b-a12b', 'openai/gpt-oss-120b'],
-  fast: ['openai/gpt-oss-20b', 'google/diffusiongemma-26b-a4b-it', 'nvidia/nemotron-3-super-120b-a12b'],
+  // kimi-k3 and gpt-oss-120b were retired by NVIDIA (Oct/Sep 2026); discovery
+  // (below) replaces any rung that stops answering, so these are a starting point.
+  text: ['moonshotai/kimi-k2.6', 'deepseek-ai/deepseek-v4.1-flash', 'nvidia/nemotron-3-ultra-550b-a55b'],
+  fast: ['nvidia/nemotron-3.5-lightning-30b-a3b', 'z-ai/glm-5.3-flash', 'minimaxai/minimax-m3.1-flash'],
   // The OS workforce ladder: every rung a verified tool-caller that holds a
-  // long conversation. Kimi K3 leads, built for long-horizon agentic use.
-  agent: ['moonshotai/kimi-k3', 'nvidia/nemotron-3-super-120b-a12b', 'openai/gpt-oss-120b'],
+  // long conversation, confirmed by discovery's tool-call probe.
+  agent: ['moonshotai/kimi-k2.6', 'deepseek-ai/deepseek-v4.1-flash', 'nvidia/nemotron-3-ultra-550b-a55b'],
   image: ['black-forest-labs/flux.2-klein-4b'],
 };
 
@@ -180,7 +189,7 @@ export async function nvidiaChat(params: {
   const doFetch = params.fetchImpl ?? fetch;
   const effort = params.job === 'fast' ? 'low' : 'medium';
   const attempts: Array<{ model: string; error: string }> = [];
-  for (const model of config.ladders[params.job]) {
+  for (const model of liveLadder(config, params.job)) {
     const turn = await completeOnce(doFetch, config, model, effort, params.maxTokens,
       [{ role: 'system', content: params.system }, { role: 'user', content: params.user }]);
     if (!turn.ok) {
@@ -204,15 +213,42 @@ export async function nvidiaChat(params: {
 
 type TurnResult =
   | { ok: true; message: any; finishReason?: string; inputTokens: number; outputTokens: number }
-  | { ok: false; error: string; keyRefused: boolean };
+  | { ok: false; error: string; keyRefused: boolean; status?: number };
+
+// ── What the models told us at runtime ───────────────────────────────────────
+//
+// NVIDIA retires free models on its own schedule (kimi-k3 on 15 Oct 2026,
+// gpt-oss-120b on 3 Sep) and an account can lose a listed model (404 "Function
+// not found for account"). Neither comes back, so a model that answers 410 or
+// 404 is skipped for a day instead of costing every call a failed rung. And a
+// model that rejects `reasoning_effort` is re-asked without it, once, and
+// remembered — new models arrive with no record of whether they reason.
+
+const DEAD_FOR_MS = 24 * 60 * 60 * 1000;
+const dead = new Map<string, { until: number; reason: string }>();
+const noReasoningEffort = new Set<string>();
+
+export function markModelDead(model: string, reason: string, now = Date.now()): void {
+  dead.set(model, { until: now + DEAD_FOR_MS, reason });
+}
+
+export function deadModels(now = Date.now()): Array<{ model: string; reason: string }> {
+  return [...dead].filter(([, d]) => d.until > now).map(([model, d]) => ({ model, reason: d.reason }));
+}
+
+function isDead(model: string, now = Date.now()): boolean {
+  const d = dead.get(model);
+  if (d && d.until <= now) dead.delete(model);
+  return Boolean(d && d.until > now);
+}
 
 /** One chat-completions request to one model, with the OS wire rules. Never throws. */
 async function completeOnce(
   doFetch: typeof fetch, config: Pick<NvidiaConfig, 'apiKey' | 'chatBase'>, model: string, effort: 'low' | 'medium', maxTokens: number,
-  messages: any[], tools?: any[],
+  messages: any[], tools?: any[], timeoutMs = FREE_TIMEOUT_MS,
 ): Promise<TurnResult> {
   const known = FREE_MODELS.find((m) => m.id === model);
-  const reasons = known ? known.reasoning : true;
+  const reasons = !noReasoningEffort.has(model) && (known ? known.reasoning : true);
   const body = {
     model,
     max_tokens: Math.min(maxTokens + (reasons ? REASONING_HEADROOM[effort] : 0), MAX_TOKENS_CEILING),
@@ -225,10 +261,18 @@ async function completeOnce(
       method: 'POST',
       headers: { authorization: `Bearer ${config.apiKey}`, 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(FREE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const raw = await res.text();
-    if (!res.ok) return { ok: false, error: describeHttp(res.status, raw), keyRefused: res.status === 401 || res.status === 403 };
+    if (!res.ok) {
+      if (res.status === 400 && reasons && /reasoning/i.test(raw)) {
+        noReasoningEffort.add(model);
+        return completeOnce(doFetch, config, model, effort, maxTokens, messages, tools, timeoutMs);
+      }
+      const error = describeHttp(res.status, raw);
+      if (res.status === 410 || res.status === 404) markModelDead(model, error);
+      return { ok: false, error, keyRefused: res.status === 401 || res.status === 403, status: res.status };
+    }
     const json = JSON.parse(raw);
     return {
       ok: true,
@@ -238,8 +282,110 @@ async function completeOnce(
       outputTokens: Number(json?.usage?.completion_tokens) || 0,
     };
   } catch (err: any) {
-    return { ok: false, error: err?.name === 'TimeoutError' ? 'timed out after 60 s' : (err?.message || 'network error'), keyRefused: false };
+    return { ok: false, error: err?.name === 'TimeoutError' ? `timed out after ${Math.round(timeoutMs / 1000)} s` : (err?.message || 'network error'), keyRefused: false };
   }
+}
+
+// ── Discovery: which free models answer this account today ───────────────────
+//
+// Candidates per job, best first. Only the ones that answer a probe — and, for
+// agents, actually call a tool — are used, so a retired or withdrawn model
+// drops out on the next check without a deploy. Checked at boot, every six
+// hours, and from Admin → NVIDIA → Test every model.
+
+export const CANDIDATES: Record<NvidiaJob, string[]> = {
+  text: [
+    'moonshotai/kimi-k2.6', 'deepseek-ai/deepseek-v4.1-flash', 'nvidia/nemotron-3-ultra-550b-a55b', 'mistralai/mistral-large-4-1t-a52b',
+    'z-ai/glm-5.3-flash', 'nvidia/nemotron-3.5-super-vl-120b-a12b', 'minimaxai/minimax-m3.1-flash', 'nvidia/nemotron-3-super-120b-a12b',
+    'nvidia/llama-3.1-nemotron-ultra-253b-v1', 'google/gemma-4-31b-it',
+  ],
+  fast: [
+    'nvidia/nemotron-3.5-lightning-30b-a3b', 'z-ai/glm-5.3-flash', 'minimaxai/minimax-m3.1-flash', 'deepseek-ai/deepseek-v4.1-flash',
+    'nvidia/nemotron-nano-3-30b-a3b', 'openai/gpt-oss-20b', 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', 'google/gemma-3-12b-it',
+  ],
+  agent: [
+    'moonshotai/kimi-k2.6', 'deepseek-ai/deepseek-v4.1-flash', 'nvidia/nemotron-3-ultra-550b-a55b', 'z-ai/glm-5.3-flash',
+    'minimaxai/minimax-m3.1-flash', 'mistralai/mistral-large-4-1t-a52b', 'nvidia/nemotron-3.5-super-vl-120b-a12b', 'nvidia/nemotron-3-super-120b-a12b',
+  ],
+};
+
+export interface ProbeResult { model: string; ok: boolean; ms: number; reply?: string; error?: string; tools?: boolean; toolError?: string }
+export interface Discovery { at: number; ladders: Record<NvidiaJob, string[]>; results: ProbeResult[] }
+
+let discovery: Discovery | null = null;
+
+export function lastDiscovery(): Discovery | null { return discovery; }
+
+const PROBE_TIMEOUT_MS = 30_000;
+const PROBE_TOOL = { type: 'function', function: { name: 'get_time', description: 'Returns the current time.', parameters: { type: 'object', properties: {}, additionalProperties: false } } };
+
+/** Probes every candidate (and the configured ladders) once; builds the ladders from what answered. */
+export async function discoverModels(params: { config?: NvidiaConfig; fetchImpl?: typeof fetch } = {}): Promise<Discovery> {
+  const config = params.config ?? await getNvidiaConfig();
+  const doFetch = params.fetchImpl ?? fetch;
+  if (!config.apiKey) throw new NvidiaError('No NVIDIA key is set (Admin → NVIDIA).', []);
+  const models = [...new Set([...config.ladders.text, ...config.ladders.fast, ...config.ladders.agent, ...CANDIDATES.text, ...CANDIDATES.fast, ...CANDIDATES.agent])];
+  const agentCandidates = new Set([...config.ladders.agent, ...CANDIDATES.agent]);
+
+  const results = await Promise.all(models.map(async (model): Promise<ProbeResult> => {
+    const started = Date.now();
+    const r = await completeOnce(doFetch, config, model, 'low', 32,
+      [{ role: 'system', content: 'Answer with the single word OK.' }, { role: 'user', content: 'Reply OK.' }], undefined, PROBE_TIMEOUT_MS);
+    if (!r.ok) return { model, ok: false, ms: Date.now() - started, error: r.error };
+    const text = assistantText(r.message).trim();
+    if (!text) return { model, ok: false, ms: Date.now() - started, error: `empty answer (finish_reason ${r.finishReason ?? 'unknown'})` };
+    const result: ProbeResult = { model, ok: true, ms: Date.now() - started, reply: text.slice(0, 40) };
+    if (agentCandidates.has(model)) {
+      const t = await completeOnce(doFetch, config, model, 'low', 128,
+        [{ role: 'system', content: 'You test tool calling. Call the get_time tool.' }, { role: 'user', content: 'What time is it? Use the tool.' }],
+        [PROBE_TOOL], PROBE_TIMEOUT_MS);
+      result.tools = t.ok && Array.isArray(t.message?.tool_calls) && t.message.tool_calls.length > 0;
+      if (!result.tools) result.toolError = t.ok ? 'answered without calling the tool' : t.error;
+    }
+    return result;
+  }));
+
+  const ok = (id: string) => results.find((r) => r.model === id)?.ok;
+  const tools = (id: string) => results.find((r) => r.model === id)?.tools;
+  // The admin's own order first, where those models still answer; then the candidates.
+  const pick = (job: NvidiaJob, good: (id: string) => boolean | undefined) =>
+    [...new Set([...config.ladders[job], ...CANDIDATES[job]])].filter((id) => good(id)).slice(0, LADDER_MAX);
+  discovery = {
+    at: Date.now(),
+    ladders: { text: pick('text', ok), fast: pick('fast', ok), agent: pick('agent', tools) },
+    results,
+  };
+  logger.info({ ladders: discovery.ladders, failed: results.filter((r) => !r.ok).map((r) => r.model) }, 'nvidia_models_discovered');
+  return discovery;
+}
+
+/** Discovery on a schedule; never throws. */
+export async function refreshNvidiaModels(): Promise<void> {
+  try {
+    const config = await getNvidiaConfig(true);
+    if (config.enabled && config.apiKey) await discoverModels({ config });
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : err }, 'nvidia_discovery_failed');
+  }
+}
+
+/**
+ * The rungs a call actually climbs: the configured ladder minus models known
+ * to be gone, topped up from the last discovery to three.
+ */
+export function liveLadder(config: Pick<NvidiaConfig, 'ladders'>, job: NvidiaJob): string[] {
+  const out = config.ladders[job].filter((m) => !isDead(m));
+  for (const m of discovery?.ladders[job] ?? []) {
+    if (out.length >= LADDER_MAX) break;
+    if (!out.includes(m) && !isDead(m)) out.push(m);
+  }
+  return out;
+}
+
+export function resetModelHealthForTests(): void {
+  dead.clear();
+  noReasoningEffort.clear();
+  discovery = null;
 }
 
 export interface AgentTool { name: string; description?: string; input_schema: unknown }
@@ -274,7 +420,7 @@ export async function nvidiaAgentLoop(params: {
 }): Promise<AgentLoopResult> {
   const config = params.config ?? await getNvidiaConfig();
   const doFetch = params.fetchImpl ?? fetch;
-  const ladder = config.ladders.agent;
+  const ladder = liveLadder(config, 'agent');
   const tools = params.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description ?? '', parameters: t.input_schema } }));
   const messages: any[] = [{ role: 'system', content: params.system }, ...params.history];
   const attempts: Array<{ model: string; error: string }> = [];

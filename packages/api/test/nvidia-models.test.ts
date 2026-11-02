@@ -25,7 +25,7 @@ test('nvidia chat: climbs the ladder past a 504 and an empty answer, sends the O
   const fetchImpl = (async (_url: string, init: any) => { seen.push(JSON.parse(init.body)); return replies.shift()!; }) as any;
   const r = await nv.nvidiaChat({ system: 's', user: 'u', maxTokens: 400, job: 'text', config: config(), fetchImpl });
   assert.equal(r.text, 'Hello there');
-  assert.equal(r.model, 'openai/gpt-oss-120b');
+  assert.equal(r.model, nv.DEFAULT_LADDERS.text[2]);
   assert.deepEqual(seen.map((b) => b.model), nv.DEFAULT_LADDERS.text);
   assert.equal(r.attempts.length, 2);
   for (const b of seen) {
@@ -42,7 +42,7 @@ test('nvidia chat: no reasoning_effort for a non-reasoning model; fast job uses 
   assert.equal(bodies[0].reasoning_effort, undefined);
   assert.equal(bodies[0].max_tokens, 50);
   await nv.nvidiaChat({ system: 's', user: 'u', maxTokens: 50, job: 'fast', config: config(), fetchImpl });
-  assert.equal(bodies[1].model, 'openai/gpt-oss-20b');
+  assert.equal(bodies[1].model, nv.DEFAULT_LADDERS.fast[0]);
   assert.equal(bodies[1].reasoning_effort, 'low');
 });
 
@@ -99,7 +99,7 @@ test('agent loop: runs tools on the free model and returns its answer', async ()
   assert.equal(r.ok, true);
   assert.deepEqual(ran, [['list_posts', { limit: 2 }]]);
   assert.deepEqual(shown, ['Checking.', 'You have 2 posts.']);
-  assert.equal(bodies[0].model, 'moonshotai/kimi-k3');
+  assert.equal(bodies[0].model, nv.DEFAULT_LADDERS.agent[0]);
   assert.equal(bodies[0].tools[0].function.name, 'list_posts');
   const toolMsg = bodies[1].messages.find((m: any) => m.role === 'tool');
   assert.equal(toolMsg.tool_call_id, 'c1');
@@ -122,7 +122,7 @@ test('agent loop: a failing rung hands the conversation to the next one, tools a
   });
   assert.equal(r.ok, true);
   assert.equal(runs, 1);
-  assert.deepEqual(models, ['moonshotai/kimi-k3', 'moonshotai/kimi-k3', 'nvidia/nemotron-3-super-120b-a12b']);
+  assert.deepEqual(models, [nv.DEFAULT_LADDERS.agent[0], nv.DEFAULT_LADDERS.agent[0], nv.DEFAULT_LADDERS.agent[1]]);
 });
 
 test('agent loop: after three failed tries it stops and briefs the paid model on work already done', async () => {
@@ -192,7 +192,7 @@ test('callAINonStreaming: answers from NVIDIA when it works; free-only key fails
       ai.callAINonStreaming('anthropic', ai.NVIDIA_FREE_ONLY, ai.FAST_MODEL, 'sys-b', 'user-b', 100, { userId: null, feature: 't', skipCache: true }),
       (err: any) => err.message === ai.AI_UNAVAILABLE_MESSAGE && /no paid AI key/.test(err.detail),
     );
-    assert.equal(ai.computeAICostUsd('moonshotai/kimi-k3', 10_000, 10_000), 0, 'free models price at zero');
+    assert.equal(ai.computeAICostUsd('moonshotai/kimi-k2.6', 10_000, 10_000), 0, 'free models price at zero');
     assert.equal(ai.resolveTextKey({ provider: 'anthropic', encryptedKey: null, googleEncryptedKey: null, nvidiaReady: true }), process.env.ANTHROPIC_API_KEY || ai.NVIDIA_FREE_ONLY);
   } finally {
     globalThis.fetch = realFetch;
@@ -216,4 +216,45 @@ test('nvidia via Dakyworld OS: with no key here, chat goes to the OS proxy with 
   assert.equal(r.text, 'via OS');
   assert.deepEqual(seen, [{ url: 'https://os.example.com/api/partner/v1/nvidia/chat/completions', auth: 'Bearer pk_test' }]);
   await assert.rejects(nv.nvidiaImage({ prompt: 'x', config: cfg, fetchImpl }), /Dakyworld OS only shares the chat models/);
+});
+
+test('nvidia health: a retired (410) model is skipped on later calls; a reasoning 400 is retried without it', async () => {
+  nv.resetModelHealthForTests();
+  const cfg = config({ ladders: { ...nv.DEFAULT_LADDERS, text: ['retired/model', 'plain/model'] } });
+  const seen: any[] = [];
+  const replies: Array<() => Response> = [
+    () => json(410, { detail: "The model 'retired/model' has reached its end of life" }),
+    () => json(400, { error: { message: "reasoning_effort: Extra inputs are not permitted" } }),
+    () => json(200, { choices: [{ message: { content: 'first' } }] }),
+    () => json(200, { choices: [{ message: { content: 'second' } }] }),
+  ];
+  const fetchImpl = (async (_u: string, init: any) => { seen.push(JSON.parse(init.body)); return replies.shift()!(); }) as any;
+  assert.equal((await nv.nvidiaChat({ system: 's', user: 'u', maxTokens: 50, job: 'text', config: cfg, fetchImpl })).text, 'first');
+  assert.deepEqual(seen.map((b) => [b.model, 'reasoning_effort' in b]), [['retired/model', true], ['plain/model', true], ['plain/model', false]]);
+  assert.deepEqual(nv.deadModels().map((d) => d.model), ['retired/model']);
+  seen.length = 0;
+  assert.equal((await nv.nvidiaChat({ system: 's', user: 'u', maxTokens: 50, job: 'text', config: cfg, fetchImpl })).text, 'second');
+  assert.deepEqual(seen.map((b) => [b.model, 'reasoning_effort' in b]), [['plain/model', false]], 'dead model skipped, no-reasoning remembered');
+  nv.resetModelHealthForTests();
+});
+
+test('nvidia discovery: ladders are built from models that answer (agents must call a tool), and fill gaps at call time', async () => {
+  nv.resetModelHealthForTests();
+  const working = new Set(['deepseek-ai/deepseek-v4.1-flash', 'z-ai/glm-5.3-flash', 'nvidia/nemotron-3.5-lightning-30b-a3b']);
+  const toolCallers = new Set(['deepseek-ai/deepseek-v4.1-flash']);
+  const fetchImpl = (async (_u: string, init: any) => {
+    const b = JSON.parse(init.body);
+    if (!working.has(b.model)) return json(410, { detail: 'end of life' });
+    if (b.tools) return json(200, { choices: [{ message: toolCallers.has(b.model) ? { content: '', tool_calls: [{ id: '1', function: { name: 'get_time', arguments: '{}' } }] } : { content: 'no' } }] });
+    return json(200, { choices: [{ message: { content: 'OK' } }] });
+  }) as any;
+  const cfg = config();
+  const found = await nv.discoverModels({ config: cfg, fetchImpl });
+  assert.deepEqual(found.ladders.text, ['deepseek-ai/deepseek-v4.1-flash', 'z-ai/glm-5.3-flash']);
+  assert.deepEqual(found.ladders.fast, ['nvidia/nemotron-3.5-lightning-30b-a3b', 'z-ai/glm-5.3-flash', 'deepseek-ai/deepseek-v4.1-flash']);
+  assert.deepEqual(found.ladders.agent, ['deepseek-ai/deepseek-v4.1-flash']);
+  // A saved ladder of retired models (marked dead by the probe) is topped up from discovery.
+  const saved = config({ ladders: { ...nv.DEFAULT_LADDERS, text: ['moonshotai/kimi-k2.6', 'nvidia/nemotron-3-ultra-550b-a55b'] } });
+  assert.deepEqual(nv.liveLadder(saved, 'text'), ['deepseek-ai/deepseek-v4.1-flash', 'z-ai/glm-5.3-flash']);
+  nv.resetModelHealthForTests();
 });

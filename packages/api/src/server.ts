@@ -120,6 +120,7 @@ import { registerMediaStoreRoutes } from './server/mediaStore.ts';
 import { registerNvidiaRoutes } from './server/nvidiaRoutes.ts';
 import { registerAIOpsRoutes } from './server/aiOpsRoutes.ts';
 import { runAIMonitor } from './server/aiTrace.ts';
+import { refreshNvidiaModels } from './server/nvidiaModels.ts';
 import { pruneCheckpoints } from './server/aiCheckpoints.ts';
 import { pruneAIResponseCache } from './ai-helpers.ts';
 import { registerCardTemplateRoutes } from './server/cardRoutes.ts';
@@ -1224,6 +1225,9 @@ if (config.nodeEnv !== 'test') {
       void dbQuery(`DELETE FROM ai_call_traces WHERE created_at < NOW() - INTERVAL '90 days'`).catch(() => undefined);
     };
     aiHousekeeping();
+    // Which free NVIDIA models answer this account today: NVIDIA retires them without notice.
+    void refreshNvidiaModels();
+    setInterval(() => void refreshNvidiaModels(), 6 * 60 * 60 * 1000);
     setInterval(aiHousekeeping, 6 * 60 * 60 * 1000);
 
     // ── AI Sales OS ──
