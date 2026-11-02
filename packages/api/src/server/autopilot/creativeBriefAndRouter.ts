@@ -827,8 +827,10 @@ export function createCreativeBriefForItem(params: {
     ...(params.controlsOverride ?? {}),
   };
 
-  const spendLimitUsd = params.spendLimitUsd ?? Math.min(5.0, Math.max(0.5, business.capacity.monthly_budget_usd));
-  const creditCeiling = params.creditCeiling ?? Math.min(150, Math.max(10, business.capacity.monthly_credit_cap));
+  // Default per-brief cap. Real video costs (e.g. Seedance 2.5: $3.95 per 5 s clip) need room for a multi-clip video.
+  const spendLimitUsd = params.spendLimitUsd ?? Math.min(20.0, Math.max(0.5, business.capacity.monthly_budget_usd));
+  // The credit ceiling matches the spend limit at cost × 1.54, within the monthly credit cap.
+  const creditCeiling = params.creditCeiling ?? Math.min(creditsForUsd(spendLimitUsd), Math.max(10, business.capacity.monthly_credit_cap));
 
   const costEstimate = estimateGenerationCost({
     workflowType: item.workflow_type,
