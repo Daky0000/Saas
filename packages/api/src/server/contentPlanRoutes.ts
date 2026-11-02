@@ -7,11 +7,12 @@ import { randomUUID } from 'crypto';
 import { logger } from '../logger.ts';
 import { decryptPlatformConfig } from '../integration-helpers.ts';
 import { dbQuery } from '../db.ts';
-import { getAIConfig, resolveActiveKey, callAINonStreaming, hasAICredits, chargeAICredits, ensureCreditAccount, FAST_MODEL, GEMINI_MODELS } from '../ai-helpers.ts';
+import { getAIConfig, resolveTextKey, callAINonStreaming, hasAICredits, chargeAICredits, ensureCreditAccount, FAST_MODEL, GEMINI_MODELS } from '../ai-helpers.ts';
 import { buildSharedAgentContext } from './agentSharedContext.ts';
 import { magnificOneGenerate, magnificGenerateImage } from './magnificRoutes.ts';
 import { DEFAULT_OPENAI_IMAGE_MODEL } from './openaiRoutes.ts';
 import { durableMediaUrl, getMediaStorage, storeMediaBytes } from './mediaStore.ts';
+import { nvidiaImage, nvidiaReady } from './nvidiaModels.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auto-content plans.
@@ -137,7 +138,16 @@ export async function generateFeaturedImage(prompt: string): Promise<string | nu
       logger.warn({ e: e instanceof Error ? e.message : e }, 'content_plan_magnific_image_failed');
     }
   }
-  // 2. Secondary: Gemini image
+  // 2. Free: NVIDIA FLUX (same image ladder as Dakyworld OS), before any paid fallback.
+  if (await nvidiaReady()) {
+    try {
+      const drawn = await nvidiaImage({ prompt, width: 1024, height: 1024 });
+      return storeGeneratedImage(drawn.bytes.toString('base64'), drawn.mimeType);
+    } catch (e) {
+      logger.warn({ e: e instanceof Error ? e.message : e }, 'content_plan_nvidia_image_failed');
+    }
+  }
+  // 3. Paid: Gemini image
   // Admin-configured key wins; env is fallback only
   const googleKey = (await getPlatformKey('google')) || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
   if (googleKey) {
@@ -200,8 +210,8 @@ export function buildContentPlanEngine({ pool, createNotification, sendPlatformE
         return;
       }
       const aiCfg = await getAIConfig();
-      const apiKey = resolveActiveKey(aiCfg);
-      if (!apiKey) throw new Error('AI not configured — set the platform AI key in Admin → AI Assistant → Configuration');
+      const apiKey = resolveTextKey(aiCfg);
+      if (!apiKey) throw new Error('AI not configured — add the free NVIDIA key in Admin → NVIDIA, or a paid key in Admin → AI Assistant → Configuration');
 
       const [sharedCtx, styleProfile, socials] = await Promise.all([
         buildSharedAgentContext(plan.user_id).catch(() => ''),
@@ -236,7 +246,7 @@ ${imageLine}
 Tone: ${plan.tone}. Piece #${(plan.runs_count ?? 0) + 1} of an ongoing series — vary the angle from typical previous pieces.
 Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 sentence hook", "content": "the full post body, 150-350 words, HTML paragraphs allowed", "needs_image": true/false, "image_prompt": "vivid image-generation prompt under 60 words (empty string if needs_image is false)"}`,
         1400,
-        { userId: plan.user_id, feature: 'content_plan' }
+        { userId: plan.user_id, feature: 'content_plan', nvidiaJob: 'text' }
       );
 
       let piece: { title?: string; excerpt?: string; content?: string; needs_image?: boolean; image_prompt?: string } = {};
@@ -252,7 +262,7 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
           `You are Vetta, the Quality Control agent. Review marketing content against the user's brand, audience, goals and instructions. Fix what's weak; keep what works.${sharedCtx ? `\n\nUser context:\n${sharedCtx}` : ''}${plan.custom_instructions ? `\n\nUser's instructions: ${String(plan.custom_instructions).slice(0, 800)}` : ''}`,
           `Review this piece and respond ONLY with JSON {"approved": true/false, "title": "...", "excerpt": "...", "content": "..."} — return the fields improved if needed, unchanged if already strong.\n\n${JSON.stringify({ title: piece.title, excerpt: piece.excerpt, content: piece.content })}`,
           1400,
-          { userId: plan.user_id, feature: 'content_plan_qa' }
+          { userId: plan.user_id, feature: 'content_plan_qa', nvidiaJob: 'text' }
         );
         const qa = JSON.parse(qaRaw.slice(qaRaw.indexOf('{'), qaRaw.lastIndexOf('}') + 1));
         if (qa && typeof qa === 'object') {
@@ -318,7 +328,7 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
     let credits = 0;
     try {
       const aiCfg = await getAIConfig();
-      const apiKey = resolveActiveKey(aiCfg);
+      const apiKey = resolveTextKey(aiCfg);
       if (!apiKey) throw new Error('AI not configured');
       const model = aiCfg.provider === 'google'
         ? (GEMINI_MODELS.includes(aiCfg.model) ? aiCfg.model : 'gemini-2.0-flash')

@@ -117,6 +117,7 @@ import { registerSocialConnectRoutes, type SocialConnectDeps } from './server/so
 import { registerSocialRoutes } from './server/socialRoutes.ts';
 import { buildMediaModule } from './server/mediaRoutes.ts';
 import { registerMediaStoreRoutes } from './server/mediaStore.ts';
+import { registerNvidiaRoutes } from './server/nvidiaRoutes.ts';
 import { registerCardTemplateRoutes } from './server/cardRoutes.ts';
 import { registerPricingRoutes } from './server/pricingRoutes.ts';
 import { registerWordPressRoutes } from './server/wordpressRoutes.ts';
@@ -1023,6 +1024,7 @@ app.use('/api/admin/higgsfield', registerHiggsfieldRoutes({ requireAdmin, hasDat
 
 // ─── Magnific AI Routes ─────────────────────────────────────────────────────────
 app.use('/api', registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase, pool }));
+app.use('/api', registerNvidiaRoutes({ requireAdmin, hasDatabase, pool }));
 
 // ── Nova Design Agent Routes ───────────────────────────────────────────────────
 const { router: novaRouter, runScheduledAgents, runAgentForUser } = buildNovaModule({ requireAuth, requireAdmin, hasDatabase, dbQuery, pool, getAIConfig, resolveActiveKey, decryptAIKey, AGENT_DEFS });

@@ -6,6 +6,7 @@ import { decryptIntegrationSecret } from './integration-helpers.ts';
 import { pool, dbQuery } from './db.ts';
 import { logger } from './logger.ts';
 import { randomUUID, createHash } from 'crypto';
+import { FREE_MODELS, getNvidiaConfig, jobForModel, nvidiaChat } from './server/nvidiaModels.ts';
 
 export const AI_CONFIG_PLATFORM = 'ai_assistant';
 
@@ -45,22 +46,41 @@ export async function getAIConfig(): Promise<{
   encryptedKey: string | null;
   googleEncryptedKey: string | null;
   systemPrompt: string | null;
+  /** Free NVIDIA models are configured and switched on (Admin → NVIDIA). */
+  nvidiaReady: boolean;
 }> {
-  const cfg = await getPlatformConfig(AI_CONFIG_PLATFORM);
+  const [cfg, nvidia] = await Promise.all([getPlatformConfig(AI_CONFIG_PLATFORM), getNvidiaConfig().catch(() => null)]);
   return {
     model: String(cfg.model || DEFAULT_CHAT_MODEL),
     provider: (cfg.provider as 'anthropic' | 'google') || 'anthropic',
     encryptedKey: cfg.apiKeyEncrypted ? String(cfg.apiKeyEncrypted) : null,
     googleEncryptedKey: cfg.googleApiKeyEncrypted ? String(cfg.googleApiKeyEncrypted) : null,
     systemPrompt: cfg.systemPrompt ? String(cfg.systemPrompt) : null,
+    nvidiaReady: Boolean(nvidia?.enabled && nvidia.apiKey),
   };
 }
 
+/** The paid vendor's key. Agent, tool and streaming paths use this: they need Claude or Gemini. */
 export function resolveActiveKey(config: { provider: 'anthropic' | 'google'; encryptedKey: string | null; googleEncryptedKey: string | null }): string {
   if (config.provider === 'google') {
     return (config.googleEncryptedKey ? decryptAIKey(config.googleEncryptedKey) : null) || process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY || '';
   }
   return (config.encryptedKey ? decryptAIKey(config.encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+}
+
+/**
+ * Stands in for a paid key when only the free NVIDIA models are configured.
+ * Only callAINonStreaming understands it; never hand it to a vendor SDK.
+ */
+export const NVIDIA_FREE_ONLY = 'nvidia-free-only';
+
+/**
+ * The key for one-shot generation through callAINonStreaming: the paid key,
+ * or NVIDIA_FREE_ONLY when there is none but the free models are on — so
+ * content can be generated with no paid vendor at all.
+ */
+export function resolveTextKey(config: { provider: 'anthropic' | 'google'; encryptedKey: string | null; googleEncryptedKey: string | null; nvidiaReady?: boolean }): string {
+  return resolveActiveKey(config) || (config.nvidiaReady ? NVIDIA_FREE_ONLY : '');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,6 +103,9 @@ export const MODEL_COSTS: Record<string, { in: number; out: number; cacheRead?: 
   'gemini-2.0-flash':          { in: 0.10, out: 0.4 },
   'gemini-1.5-pro':            { in: 1.25, out: 5 },
   'gemini-1.5-flash':          { in: 0.075, out: 0.3 },
+  // Free NVIDIA models cost nothing. Without these rows they would price at
+  // FALLBACK_COST (Sonnet rates) and a free day would read as an expensive one.
+  ...Object.fromEntries(FREE_MODELS.map((m) => [m.id, { in: 0, out: 0, cacheRead: 0 }])),
 };
 const FALLBACK_COST = { in: 3, out: 15, cacheRead: 0.3 };
 
@@ -218,7 +241,7 @@ export async function callAINonStreaming(
   systemPrompt: string,
   userMessage: string,
   maxTokens = 400,
-  usageMeta?: { userId: string | null; feature: string; skipCache?: boolean; cacheTtlMs?: number },
+  usageMeta?: { userId: string | null; feature: string; skipCache?: boolean; cacheTtlMs?: number; /** Which free NVIDIA ladder; defaults from the model tier. */ nvidiaJob?: 'text' | 'fast' },
 ): Promise<string> {
   const cacheKey = createHash('sha256')
     .update(`${provider}:${model}:${maxTokens}:${systemPrompt}:${userMessage}`)
@@ -236,6 +259,33 @@ export async function callAINonStreaming(
   }
 
   tokenEfficiencyStats.totalCalls += 1;
+
+  // Free first, as in Dakyworld OS: the job's ladder of free NVIDIA models,
+  // then the paid vendor below only if every rung failed.
+  const nvidia = await getNvidiaConfig().catch(() => null);
+  if (nvidia?.enabled && nvidia.apiKey) {
+    try {
+      const r = await nvidiaChat({ system: systemPrompt, user: userMessage, maxTokens, job: usageMeta?.nvidiaJob ?? jobForModel(model), config: nvidia });
+      if (usageMeta) {
+        void recordAIUsage({ ...usageMeta, provider: 'nvidia', model: r.model, inputTokens: r.inputTokens, outputTokens: r.outputTokens });
+      }
+      aiResponseCache.set(cacheKey, {
+        text: r.text,
+        expiresAt: Date.now() + (usageMeta?.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS),
+        estimatedTokens: r.inputTokens + r.outputTokens,
+        model: r.model,
+      });
+      return r.text;
+    } catch (err) {
+      if (!apiKey || apiKey === NVIDIA_FREE_ONLY) {
+        throw new Error(`${err instanceof Error ? err.message : 'Free NVIDIA models failed'} — and no paid AI key is set in Admin → AI Assistant to fall back to.`);
+      }
+      logger.warn({ err: err instanceof Error ? err.message : err, feature: usageMeta?.feature }, 'nvidia_free_failed_using_paid');
+    }
+  }
+  if (apiKey === NVIDIA_FREE_ONLY) {
+    throw new Error('The free NVIDIA models are switched off and no paid AI key is set — configure one in Admin → NVIDIA or Admin → AI Assistant.');
+  }
 
   try {
     if (provider === 'google') {

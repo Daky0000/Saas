@@ -20,6 +20,7 @@ import {
   Zap,
   Globe,
   Wand2,
+  Cpu,
 } from 'lucide-react';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { AppUser, clearStoredUser } from '../utils/userSession';
@@ -41,6 +42,7 @@ const AdminApify = lazy(() => import('../components/admin/AdminApify'));
 const AdminLearn = lazy(() => import('../components/admin/AdminLearn'));
 const AdminAgents = lazy(() => import('../components/admin/AdminAgents'));
 const AdminMagnific = lazy(() => import('../components/admin/AdminMagnific'));
+const AdminNvidia = lazy(() => import('../components/admin/AdminNvidia'));
 const AdminKling = lazy(() => import('../components/admin/AdminKling'));
 const AdminGoogle = lazy(() => import('../components/admin/AdminGoogle'));
 const AdminOpenAI = lazy(() => import('../components/admin/AdminOpenAI'));
@@ -80,6 +82,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'learn'
     | 'agents'
     | 'magnific'
+    | 'nvidia'
     | 'kling'
     | 'google'
     | 'openai'
@@ -111,6 +114,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     learn: '/admin/learn',
     agents: '/admin/agents',
     magnific: '/admin/magnific',
+    nvidia: '/admin/nvidia',
     kling: '/admin/kling',
     google: '/admin/google',
     openai: '/admin/openai',
@@ -143,6 +147,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     learn: 'Daky Learn',
     agents: 'Agent Team',
     magnific: 'Magnific AI',
+    nvidia: 'NVIDIA (free models)',
     kling: 'Kling AI',
     google: 'Google AI',
     openai: 'OpenAI',
@@ -163,7 +168,7 @@ const Admin = ({ currentUser }: AdminProps) => {
   const [activeTab, setActiveTab] = useState<AdminTab>(getInitialTab);
   const [pagesOpen, setPagesOpen] = useState(() => window.location.pathname.startsWith('/admin/pages'));
   const [aiOpen, setAiOpen] = useState(() =>
-    ['/admin/ai', '/admin/learn', '/admin/magnific', '/admin/kling', '/admin/google', '/admin/openai', '/admin/higgsfield'].some((p) =>
+    ['/admin/ai', '/admin/learn', '/admin/magnific', '/admin/nvidia', '/admin/kling', '/admin/google', '/admin/openai', '/admin/higgsfield'].some((p) =>
       window.location.pathname.startsWith(p)
     )
   );
@@ -219,6 +224,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'ai-config', label: 'Configuration', icon: Bot },
     { id: 'ai-skills', label: 'Create AI Skill', icon: Zap },
     { id: 'learn', label: 'Daky Learn', icon: BookOpen },
+    { id: 'nvidia', label: 'NVIDIA (free)', icon: Cpu },
     { id: 'magnific', label: 'Magnific AI', icon: Wand2 },
     { id: 'kling', label: 'Kling AI', icon: Clapperboard },
     { id: 'google', label: 'Google AI', icon: Globe },
@@ -228,7 +234,7 @@ const Admin = ({ currentUser }: AdminProps) => {
 
   const isPagesActive = activeTab.startsWith('pages-');
   const isAIActive =
-    activeTab.startsWith('ai-') || ['learn', 'magnific', 'kling', 'google', 'openai', 'higgsfield'].includes(activeTab);
+    activeTab.startsWith('ai-') || ['learn', 'magnific', 'nvidia', 'kling', 'google', 'openai', 'higgsfield'].includes(activeTab);
   const isApifyActive = activeTab === 'apify';
 
   useEffect(() => {
@@ -238,7 +244,7 @@ const Admin = ({ currentUser }: AdminProps) => {
         setActiveTab(tab);
         setPagesOpen(tab.startsWith('pages-'));
         setAiOpen(
-          tab.startsWith('ai-') || ['learn', 'magnific', 'kling', 'google', 'openai', 'higgsfield'].includes(tab)
+          tab.startsWith('ai-') || ['learn', 'magnific', 'nvidia', 'kling', 'google', 'openai', 'higgsfield'].includes(tab)
         );
         setApifyOpen(tab === 'apify');
       }
@@ -544,6 +550,7 @@ const Admin = ({ currentUser }: AdminProps) => {
               {activeTab === 'learn' && <AdminLearn />}
               {activeTab === 'agents' && <AdminAgents />}
               {activeTab === 'magnific' && <AdminMagnific />}
+              {activeTab === 'nvidia' && <AdminNvidia />}
               {activeTab === 'kling' && <AdminKling />}
               {activeTab === 'google' && <AdminGoogle />}
               {activeTab === 'openai' && <AdminOpenAI />}
