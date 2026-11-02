@@ -7,34 +7,58 @@ import { Router } from 'express';
 import { Resend } from 'resend';
 import { z } from 'zod';
 import { logger } from '../logger.ts';
-import { authLimiter, passwordLimiter } from '../middleware/rateLimiter.ts';
+import { authLimiter, passwordLimiter, usernameCheckLimiter } from '../middleware/rateLimiter.ts';
 import { validateBody } from '../middleware/validate.ts';
 
 // ─── Local schemas ────────────────────────────────────────────────────────────
+
+const USERNAME_RE = /^[a-zA-Z0-9_-]+$/;
+const usernameSchema = z.string().trim()
+  .min(3, { message: 'Username must be at least 3 characters' })
+  .max(32, { message: 'Username must be at most 32 characters' })
+  .regex(USERNAME_RE, { message: 'Username can use letters, numbers, _ and - only' });
 
 const authRegisterSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8, { message: 'Password must be at least 8 characters' }).max(72, { message: 'Password must be at most 72 characters (bcrypt limitation)' }),
   name: z.string().min(1).max(100),
-  // Optional: the sign-up form has no username field, so the server picks one.
-  username: z.string().min(3).max(32).regex(/^[a-zA-Z0-9_-]+$/).optional(),
+  username: usernameSchema,
 });
 
+/** Turns any text (an email's local part, a name) into username-shaped text, or ''. */
+export function usernameStem(text: string): string {
+  return String(text || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/_+/g, '_').replace(/^[_-]+|[_-]+$/g, '').slice(0, 24);
+}
+
 /**
- * A free username derived from the email's local part: "dan@x.com" → "dan",
- * then "dan_4821"-style suffixes while it is taken, then a random fallback.
- * Two people with the same mailbox name on different domains must both be
- * able to sign up.
+ * Up to `count` free usernames to offer when the wanted one is taken. Nothing
+ * is chosen for the person: these are only suggestions they can click.
+ * Candidates come from the wanted name, their name and their email, then
+ * numbered variants; `taken` answers for a whole batch in one query.
  */
-export async function allocateUsername(email: string, isTaken: (username: string) => Promise<boolean>): Promise<string> {
-  let base = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^[_-]+|[_-]+$/g, '').slice(0, 24);
-  if (base.length < 3) base = base ? `${base}_user` : 'user'; // the username rule needs 3+ characters
-  if (!(await isTaken(base))) return base;
-  for (let i = 0; i < 6; i++) {
-    const candidate = `${base}_${1000 + Math.floor(Math.random() * 9000)}`;
-    if (!(await isTaken(candidate))) return candidate;
-  }
-  return `user_${randomUUID().replace(/-/g, '').slice(0, 10)}`;
+export async function suggestUsernames(
+  input: { wanted?: string; name?: string; email?: string },
+  taken: (candidates: string[]) => Promise<Set<string>>,
+  count = 3,
+): Promise<string[]> {
+  const wanted = usernameStem(input.wanted ?? '');
+  const nameParts = String(input.name ?? '').trim().split(/\s+/).map(usernameStem).filter(Boolean);
+  const emailStem = usernameStem(String(input.email ?? '').split('@')[0]);
+  const stems = [...new Set([wanted, emailStem, nameParts.join('_'), nameParts.join('')].filter((s) => s.length >= 3))];
+  if (!stems.length) stems.push('user');
+  const base = stems[0];
+  const rand = (lo: number, hi: number) => lo + Math.floor(Math.random() * (hi - lo));
+  const candidates = [
+    ...stems.slice(1),
+    `${base}${rand(10, 100)}`,
+    `${base}_${rand(100, 1000)}`,
+    ...(nameParts[0] && nameParts[0] !== base ? [`${base}_${nameParts[0]}`] : []),
+    `${base}${new Date().getFullYear() % 100}`,
+    `${base}_${rand(1000, 10000)}`,
+    `${base}${rand(100, 1000)}`,
+  ].map((c) => c.slice(0, 32)).filter((c, i, all) => c.length >= 3 && USERNAME_RE.test(c) && c !== wanted && all.indexOf(c) === i);
+  const used = await taken(candidates);
+  return candidates.filter((c) => !used.has(c.toLowerCase())).slice(0, count);
 }
 
 const authLoginSchema = z
@@ -158,25 +182,62 @@ export function registerAuthRoutes(deps: AuthDeps): Router {
     jwtSecret, appUrl, syncProfileMedia,
   } = deps;
 
+  // Which of these usernames exist (lower-cased), in one query.
+  const takenUsernames = async (candidates: string[]): Promise<Set<string>> => {
+    const lower = [...new Set(candidates.map((c) => c.toLowerCase()))];
+    if (!lower.length) return new Set();
+    if (!hasDatabase()) {
+      const hits = await Promise.all(lower.map(async (c) => ((await findUserByUsername(c)) ? c : null)));
+      return new Set(hits.filter((c): c is string => Boolean(c)));
+    }
+    const { rows } = await dbQuery<{ u: string }>('SELECT LOWER(username) AS u FROM users WHERE LOWER(username) = ANY($1::text[])', [lower]);
+    return new Set(rows.map((r) => r.u));
+  };
+
   const router = Router();
+
+  // GET /api/auth/username-available?username=dan&name=Dan%20Smith&email=dan@x.com
+  // Checked as the person types on the sign-up form. Taken or invalid names
+  // come back with the reason and free suggestions; nothing is reserved.
+  router.get('/auth/username-available', usernameCheckLimiter, async (req: Request, res: Response) => {
+    try {
+      const raw = String(req.query.username ?? '');
+      const parsed = usernameSchema.safeParse(raw);
+      const context = { wanted: raw, name: String(req.query.name ?? ''), email: String(req.query.email ?? '') };
+      if (!parsed.success) {
+        const suggestions = await suggestUsernames(context, takenUsernames).catch(() => []);
+        return res.json({ success: true, available: false, reason: parsed.error.issues[0]?.message ?? 'Invalid username', suggestions });
+      }
+      if (!(await findUserByUsername(parsed.data))) return res.json({ success: true, available: true, suggestions: [] });
+      const suggestions = await suggestUsernames(context, takenUsernames).catch(() => []);
+      return res.json({ success: true, available: false, reason: `"${parsed.data}" is already taken`, suggestions });
+    } catch (error) {
+      logger.error({ error, errorId: (req as any).id }, 'auth_username_check_failed');
+      return res.status(500).json({ success: false, error: 'Could not check the username' });
+    }
+  });
 
   router.post('/auth/register', authLimiter, validateBody(authRegisterSchema), async (req: Request, res: Response) => {
     try {
       const { email, password, name } = req.body;
-      if (!email || !password || !name) {
-        return res.status(400).json({ success: false, error: 'Name, email, and password are required' });
+      const username = String(req.body.username).trim();
+      if (!email || !password || !name || !username) {
+        return res.status(400).json({ success: false, error: 'Name, username, email, and password are required' });
       }
 
       const existing = await findUserByEmail(email);
       if (existing) return res.status(400).json({ success: false, error: 'An account with this email already exists — sign in instead' });
 
-      // A username the caller chose is honoured or refused; without one, the
-      // server picks a free one (the form never asks for it).
-      const requested = typeof req.body.username === 'string' ? req.body.username.trim() : '';
-      if (requested && (await findUserByUsername(requested))) {
-        return res.status(400).json({ success: false, error: 'Username is already in use' });
+      // Taken: say so and offer free alternatives; the person picks.
+      if (await findUserByUsername(username)) {
+        const suggestions = await suggestUsernames({ wanted: username, name, email }, takenUsernames).catch(() => []);
+        return res.status(409).json({
+          success: false,
+          code: 'USERNAME_TAKEN',
+          error: `The username "${username}" is already taken${suggestions.length ? ` — try ${suggestions.join(', ')}` : ''}.`,
+          suggestions,
+        });
       }
-      const username = requested || await allocateUsername(email, async (u) => Boolean(await findUserByUsername(u)));
 
       const user = await createUser(name, username, email, password);
       provisionUserAgents(user.id).catch(() => undefined);
