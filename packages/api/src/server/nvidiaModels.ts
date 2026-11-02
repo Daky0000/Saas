@@ -48,7 +48,13 @@ export const FREE_MODELS: FreeModel[] = [
   { id: 'google/diffusiongemma-26b-a4b-it', name: 'DiffusionGemma 26B', reasoning: false, vision: true },
   { id: 'meta/llama-3.2-90b-vision-instruct', name: 'Llama 3.2 90B Vision', reasoning: false, vision: true },
   { id: 'google/gemma-4-31b-it', name: 'Gemma 4 31B', reasoning: true, vision: true, down: '504 on every request when last checked' },
-  { id: 'mistralai/mistral-nemotron', name: 'Mistral Nemotron', reasoning: false, vision: false, down: 'hangs to a three-minute timeout when last checked' },
+  { id: 'mistralai/mistral-nemotron', name: 'Mistral Nemotron', reasoning: false, vision: false, down: 'gone from the NVIDIA catalogue (/v1/models) on 2 Nov 2026' },
+  // Discovery fallbacks: listed in /v1/models on 2 Nov 2026, not yet in a
+  // default ladder. Flags here stop a wasted 400 on reasoning_effort.
+  { id: 'writer/palmyra-creative-122b', name: 'Palmyra Creative 122B', reasoning: false, vision: false },
+  { id: 'nvidia/llama-3.1-nemotron-ultra-253b-v1', name: 'Llama 3.1 Nemotron Ultra 253B', reasoning: false, vision: false },
+  { id: 'google/gemma-3-12b-it', name: 'Gemma 3 12B', reasoning: false, vision: true },
+  { id: 'nvidia/nemotron-3.5-bolt-e4b', name: 'Nemotron 3.5 Bolt E4B', reasoning: true, vision: false },
 ];
 
 export interface ImageModel { id: string; name: string; functionId: string; down?: string }
@@ -296,12 +302,13 @@ async function completeOnce(
 export const CANDIDATES: Record<NvidiaJob, string[]> = {
   text: [
     'moonshotai/kimi-k2.6', 'deepseek-ai/deepseek-v4.1-flash', 'nvidia/nemotron-3-ultra-550b-a55b', 'mistralai/mistral-large-4-1t-a52b',
-    'z-ai/glm-5.3-flash', 'nvidia/nemotron-3.5-super-vl-120b-a12b', 'minimaxai/minimax-m3.1-flash', 'nvidia/nemotron-3-super-120b-a12b',
+    'writer/palmyra-creative-122b', 'z-ai/glm-5.3-flash', 'nvidia/nemotron-3.5-super-vl-120b-a12b', 'minimaxai/minimax-m3.1-flash', 'nvidia/nemotron-3-super-120b-a12b',
     'nvidia/llama-3.1-nemotron-ultra-253b-v1', 'google/gemma-4-31b-it',
   ],
   fast: [
     'nvidia/nemotron-3.5-lightning-30b-a3b', 'z-ai/glm-5.3-flash', 'minimaxai/minimax-m3.1-flash', 'deepseek-ai/deepseek-v4.1-flash',
     'nvidia/nemotron-nano-3-30b-a3b', 'openai/gpt-oss-20b', 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', 'google/gemma-3-12b-it',
+    'nvidia/nemotron-3.5-bolt-e4b',
   ],
   agent: [
     'moonshotai/kimi-k2.6', 'deepseek-ai/deepseek-v4.1-flash', 'nvidia/nemotron-3-ultra-550b-a55b', 'z-ai/glm-5.3-flash',
