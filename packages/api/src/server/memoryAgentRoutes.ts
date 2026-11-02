@@ -241,7 +241,7 @@ export function registerMemoryAgentRoutes({
 
     const { encryptedKey, nvidiaReady } = await getAIConfig();
     const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
-    if (!apiKey && !nvidiaReady) return res.status(503).json({ success: false, error: 'AI not configured — add the free NVIDIA key in Admin → NVIDIA, or an Anthropic key in Admin → AI Assistant' });
+    if (!apiKey && !nvidiaReady) return res.status(503).json({ success: false, error: 'The AI assistant is temporarily unavailable. Please try again in a few minutes.' });
 
     const prompt = `You are a brand strategist AI. Generate a structured memory profile for a brand based on the following info.
 

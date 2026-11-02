@@ -190,7 +190,7 @@ test('callAINonStreaming: answers from NVIDIA when it works; free-only key fails
     globalThis.fetch = (async () => json(503, { detail: 'busy' })) as any;
     await assert.rejects(
       ai.callAINonStreaming('anthropic', ai.NVIDIA_FREE_ONLY, ai.FAST_MODEL, 'sys-b', 'user-b', 100, { userId: null, feature: 't', skipCache: true }),
-      /no paid AI key/,
+      (err: any) => err.message === ai.AI_UNAVAILABLE_MESSAGE && /no paid AI key/.test(err.detail),
     );
     assert.equal(ai.computeAICostUsd('moonshotai/kimi-k3', 10_000, 10_000), 0, 'free models price at zero');
     assert.equal(ai.resolveTextKey({ provider: 'anthropic', encryptedKey: null, googleEncryptedKey: null, nvidiaReady: true }), process.env.ANTHROPIC_API_KEY || ai.NVIDIA_FREE_ONLY);

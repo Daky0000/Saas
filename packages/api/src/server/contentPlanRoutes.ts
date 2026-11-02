@@ -7,7 +7,7 @@ import { randomUUID } from 'crypto';
 import { logger } from '../logger.ts';
 import { decryptPlatformConfig } from '../integration-helpers.ts';
 import { dbQuery } from '../db.ts';
-import { getAIConfig, resolveTextKey, callAINonStreaming, hasAICredits, chargeAICredits, ensureCreditAccount, FAST_MODEL, GEMINI_MODELS } from '../ai-helpers.ts';
+import { AIUnavailableError, aiErrorDetail, getAIConfig, resolveTextKey, callAINonStreaming, hasAICredits, chargeAICredits, ensureCreditAccount, FAST_MODEL, GEMINI_MODELS } from '../ai-helpers.ts';
 import { buildSharedAgentContext } from './agentSharedContext.ts';
 import { magnificOneGenerate, magnificGenerateImage } from './magnificRoutes.ts';
 import { DEFAULT_OPENAI_IMAGE_MODEL } from './openaiRoutes.ts';
@@ -239,7 +239,7 @@ export function buildContentPlanEngine({ pool, createNotification, sendPlatformE
       }
       const aiCfg = await getAIConfig();
       const apiKey = resolveTextKey(aiCfg);
-      if (!apiKey) throw new Error('AI not configured — add the free NVIDIA key in Admin → NVIDIA, or a paid key in Admin → AI Assistant → Configuration');
+      if (!apiKey) throw new AIUnavailableError('AI not configured — add the free NVIDIA key in Admin → NVIDIA, or a paid key in Admin → AI Assistant → Configuration');
 
       const [sharedCtx, styleProfile, socials] = await Promise.all([
         buildSharedAgentContext(plan.user_id).catch(() => ''),
@@ -352,9 +352,10 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
         { plan_id: plan.id, blog_post_id: postId }
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Generation failed';
-      logger.warn({ err, planId: plan.id, runId, finished: Object.keys(cp.state.steps) }, 'content_plan_run_failed');
-      await cp.fail(err);
+      // The run's error is shown to the customer: never a setup detail or a raw database message.
+      const message = err instanceof AIUnavailableError ? err.message : 'This piece could not be generated';
+      logger.warn({ err, detail: aiErrorDetail(err), planId: plan.id, runId, finished: Object.keys(cp.state.steps) }, 'content_plan_run_failed');
+      await cp.fail(new Error(aiErrorDetail(err)));
       const resumable = cp.state.attempts < MAX_RUN_ATTEMPTS;
       await pool.query(
         `UPDATE content_plan_runs SET status='failed', error=$2 WHERE id=$1`,

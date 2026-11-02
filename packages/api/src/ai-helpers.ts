@@ -110,11 +110,11 @@ export async function freeFirst(
     } catch (err) {
       attempts = err instanceof NvidiaError ? err.attempts : [];
       span.end({ status: 'error', provider: 'nvidia', model: 'ladder', attempts, error: err instanceof Error ? err.message : String(err) });
-      if (!paid) throw new Error(`${err instanceof Error ? err.message : 'Free NVIDIA models failed'} — and no paid AI key is set in Admin → AI Assistant to fall back to.`);
+      if (!paid) throw new AIUnavailableError(`${err instanceof Error ? err.message : 'Free NVIDIA models failed'} — and no paid AI key is set in Admin → AI Assistant to fall back to.`);
       logger.warn({ err: err instanceof Error ? err.message : err, feature: req.feature }, 'nvidia_free_failed_using_paid');
     }
   }
-  if (!paid) throw new Error('No AI is configured — add the free NVIDIA key in Admin → NVIDIA, or a paid key in Admin → AI Assistant.');
+  if (!paid) throw new AIUnavailableError('No AI is configured — add the free NVIDIA key in Admin → NVIDIA, or a paid key in Admin → AI Assistant.');
   const span = startSpan({ feature: req.feature, userId: req.userId });
   try {
     const text = await paid();
@@ -123,7 +123,7 @@ export async function freeFirst(
     span.end({ status: 'ok', provider: 'paid', model: 'agent-call', attempts, guard: out.ok ? null : { outputIssues: out.issues } });
     return out.text;
   } catch (err) {
-    span.end({ status: 'error', provider: 'paid', model: 'agent-call', attempts, error: err instanceof Error ? err.message : String(err) });
+    span.end({ status: 'error', provider: 'paid', model: 'agent-call', attempts, error: aiErrorDetail(err) });
     throw err;
   }
 }
@@ -430,13 +430,13 @@ async function generateUncached(
       attempts = err instanceof NvidiaError ? err.attempts : [{ model: 'ladder', error: err instanceof Error ? err.message : String(err) }];
       span.end({ status: 'error', provider: 'nvidia', model: 'ladder', attempts, guard: inputGuard, error: err instanceof Error ? err.message : String(err) });
       if (!apiKey || apiKey === NVIDIA_FREE_ONLY) {
-        throw new Error(`${err instanceof Error ? err.message : 'Free NVIDIA models failed'} — and no paid AI key is set in Admin → AI Assistant to fall back to.`);
+        throw new AIUnavailableError(`${err instanceof Error ? err.message : 'Free NVIDIA models failed'} — and no paid AI key is set in Admin → AI Assistant to fall back to.`);
       }
       logger.warn({ err: err instanceof Error ? err.message : err, feature: usageMeta?.feature }, 'nvidia_free_failed_using_paid');
     }
   }
   if (apiKey === NVIDIA_FREE_ONLY) {
-    throw new Error('The free NVIDIA models are switched off and no paid AI key is set — configure one in Admin → NVIDIA or Admin → AI Assistant.');
+    throw new AIUnavailableError('The free NVIDIA models are switched off and no paid AI key is set — configure one in Admin → NVIDIA or Admin → AI Assistant.');
   }
 
   // Size the call and pick the cheapest paid model that fits it.
@@ -489,39 +489,73 @@ async function generateUncached(
     return out.text;
   } catch (err: any) {
     const classified = classifyAIProviderError(provider, paidModel, err);
-    span.end({ status: 'error', provider, model: paidModel, routedFrom: route.routedFrom, attempts, guard: inputGuard, error: classified.message });
+    span.end({ status: 'error', provider, model: paidModel, routedFrom: route.routedFrom, attempts, guard: inputGuard, error: classified.detail });
     throw classified;
   }
 }
 
-export function classifyAIProviderError(provider: 'anthropic' | 'google', model: string, err: any): Error {
+// ─────────────────────────────────────────────────────────────────────────────
+// What a customer sees when the AI cannot answer. Setup problems (no key, an
+// empty vendor account, a retired model) are ours to fix, not theirs: the
+// message says only that the assistant is unavailable, and the operator's
+// detail travels on `detail` — logs, traces, Sentry and admin screens read it
+// with aiErrorDetail(). Any route that returns err.message is therefore safe.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const AI_UNAVAILABLE_MESSAGE = 'The AI assistant is temporarily unavailable. Please try again in a few minutes.';
+export const AI_BUSY_MESSAGE = 'The AI assistant is busy right now. Please try again in a moment.';
+
+export class AIUnavailableError extends Error {
+  readonly code = 'AI_UNAVAILABLE';
+  constructor(readonly detail: string, publicMessage = AI_UNAVAILABLE_MESSAGE) {
+    super(publicMessage);
+    this.name = 'AIUnavailableError';
+  }
+}
+
+/** The operator-facing explanation of an AI failure. Only for logs and admins. */
+export function aiErrorDetail(err: unknown): string {
+  if (err instanceof AIUnavailableError) return err.detail;
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** The message to show this person: the full detail for an admin, the safe one for everyone else. */
+export function aiErrorFor(err: unknown, role: string | undefined): string {
+  if (role === 'admin') return aiErrorDetail(err);
+  return err instanceof AIUnavailableError ? err.message : AI_UNAVAILABLE_MESSAGE;
+}
+
+export function classifyAIProviderError(provider: 'anthropic' | 'google', model: string, err: any): AIUnavailableError {
+  if (err instanceof AIUnavailableError) return err;
   const status: number | undefined = typeof err?.status === 'number' ? err.status : undefined;
   const msg: string = err?.message || String(err);
   const lower = msg.toLowerCase();
   const providerName = provider === 'google' ? 'Google' : 'Anthropic';
+  const unavailable = (detail: string) => new AIUnavailableError(detail);
 
   if (status === 429 || lower.includes('quota') || lower.includes('rate limit') || lower.includes('too many requests')) {
     if (provider === 'google') {
-      return new Error('Google API quota exceeded. The free tier has a limit of 0 for this project — enable billing at aistudio.google.com to use Gemini.');
+      return unavailable('Google API quota exceeded. The free tier has a limit of 0 for this project — enable billing at aistudio.google.com to use Gemini.');
     }
-    return new Error('Anthropic rate limit exceeded. Check your usage limits at console.anthropic.com.');
+    return new AIUnavailableError('Anthropic rate limit exceeded. Check your usage limits at console.anthropic.com.', AI_BUSY_MESSAGE);
   }
   if (lower.includes('credit balance')) {
-    return new Error('The Anthropic account is out of credits (the key itself is fine). Add credits at console.anthropic.com → Billing, or paste the free NVIDIA key in Admin → NVIDIA so the free models answer first.');
+    return unavailable('The Anthropic account is out of credits (the key itself is fine). Add credits at console.anthropic.com → Billing, or paste the free NVIDIA key in Admin → NVIDIA so the free models answer first.');
   }
   if (status === 401 || lower.includes('authentication_error') || lower.includes('api key not valid') || lower.includes('invalid x-api-key') || lower.includes('unauthorized')) {
-    return new Error(`Invalid ${providerName} API key. Please check your key and try again.`);
+    return unavailable(`Invalid ${providerName} API key. Please check your key and try again.`);
   }
   if (status === 403 || lower.includes('permission_error')) {
-    return new Error(`The ${providerName} API key is valid but lacks permission for model "${model}". Check the key's workspace/model access.`);
+    return unavailable(`The ${providerName} API key is valid but lacks permission for model "${model}". Check the key's workspace/model access.`);
   }
   if (status === 404 || lower.includes('not_found_error') || lower.includes('is not found')) {
-    return new Error(`Model "${model}" is not available on ${providerName} — pick a different model in Admin → AI Assistant → Configuration.`);
+    return unavailable(`Model "${model}" is not available on ${providerName} — pick a different model in Admin → AI Assistant → Configuration.`);
   }
   if (status === 529 || lower.includes('overloaded')) {
-    return new Error(`${providerName} is temporarily overloaded — try again in a moment.`);
+    return new AIUnavailableError(`${providerName} is temporarily overloaded — try again in a moment.`, AI_BUSY_MESSAGE);
   }
-  return err instanceof Error ? err : new Error(msg);
+  // Unrecognised: the vendor's own text (often raw JSON) is kept for the operator.
+  return unavailable(msg);
 }
 
 export function decryptAIKey(encryptedKey: string): string {

@@ -1300,7 +1300,7 @@ If the user has no brand profile, return 1 proposal suggesting they complete the
       const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
       if (!apiKey && !nvidiaReady) {
         await dbQuery(`UPDATE admin_agents SET status = 'error' WHERE key = $1`, [key]);
-        return res.status(503).json({ success: false, error: 'No AI configured. Add the free NVIDIA key in Admin → NVIDIA, or an Anthropic key in Admin → AI Assistant → Configuration.' });
+        return res.status(503).json({ success: false, error: 'The AI assistant is temporarily unavailable. Please try again in a few minutes.' });
       }
       const snapshot = await gatherPlatformSnapshot(key);
       const actionsPrompt = buildActionsPrompt(key, agent.autonomy_config ?? {});
@@ -1994,7 +1994,7 @@ ${teamState}` : ''}`;
 
       const aiCfg = await getAIConfig();
       const apiKey = resolveActiveKey(aiCfg);
-      if (!apiKey && !aiCfg.nvidiaReady) { send({ type: 'error', message: 'AI not configured — add the free NVIDIA key in Admin → NVIDIA, or a paid key in Admin → AI Assistant.' }); send({ type: 'done' }); return res.end(); }
+      if (!apiKey && !aiCfg.nvidiaReady) { send({ type: 'error', message: 'The AI assistant is temporarily unavailable. Please try again in a few minutes.' }); send({ type: 'done' }); return res.end(); }
       // Each text step: free NVIDIA ladder first, the paid model only when all three failed.
       const askStep = (prompt: string, maxTokens: number, feature: string) => freeFirst(
         { system: 'You are Nova, the creative director on a marketing team.', user: prompt, maxTokens, job: 'text', userId: auth.userId, feature },

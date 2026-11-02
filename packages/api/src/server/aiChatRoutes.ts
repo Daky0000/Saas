@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger } from '../logger.ts';
-import { resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits, recordFastPathSavings, chargeAICredits, resolveTextKey, isPaidKey, computeAICostUsd, classifyAIProviderError } from '../ai-helpers.ts';
+import { resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits, recordFastPathSavings, chargeAICredits, resolveTextKey, isPaidKey, computeAICostUsd, classifyAIProviderError, AIUnavailableError, aiErrorFor, aiErrorDetail } from '../ai-helpers.ts';
 import { DEFAULT_TOOL_RULES, ToolGuard, UNTRUSTED_RULE, canaryLine, capToolResult, checkOutput, fence, mergeScans, scanForInjection } from './aiGuard.ts';
 import { chatTurnKey, makeToolMemo } from './aiCheckpoints.ts';
 import { classifyChatTurn, fitHistory, routePaidModel, routingMode } from './aiRouting.ts';
@@ -57,6 +57,8 @@ interface AIChatDeps {
 }
 
 // ── Local constants ───────────────────────────────────────────────────────────
+
+const AI_UNAVAILABLE_TEXT = 'The AI assistant is temporarily unavailable. Please try again in a few minutes.';
 
 // Planted at the very top of the chat system prompt. It is stable per
 // deployment (so the prompt stays cacheable) and secret (derived from the
@@ -1140,9 +1142,11 @@ export function registerAIChatRoutes({
 
   // ── POST /api/ai/chat ─────────────────────────────────────────────────────
   router.post('/ai/chat', aiChatLimiter, async (req: Request, res: Response) => {
+    let role: string | undefined;
     try {
       const auth = requireAuth(req, res);
       if (!auth) return;
+      role = auth.role;
 
       const { messages, page } = req.body as {
         messages: Array<{ role: 'user' | 'assistant'; content: string }>;
@@ -1156,12 +1160,11 @@ export function registerAIChatRoutes({
       const aiCfg = await getAIConfig();
       const apiKey = resolveActiveKey(aiCfg);
       if (!apiKey && !aiCfg.nvidiaReady) {
-        // Local dev Butler fallback so SSE chat works out of the box even before an API key is configured
+        // No AI configured at all: say so plainly (setup steps for admins only).
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
-        const lastMsg = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
-        const butlerReply = `Good day. I am **Daky**, your social media & marketing butler.\n\nRegarding "${lastMsg.slice(0, 80)}": I am ready to draft, schedule, or orchestrate this across your connected channels. (Tip: Add your Anthropic or Google Gemini key in **Admin → AI Assistant** for live LLM streaming, or connect via **/api/v1/os/agents/invoke**.)\n\n1. How would you like to proceed?\n   - Draft a high-converting post now\n   - Schedule to connected platforms\n   - Run Multi-Agent Strategy Plan\n   - Custom`;
+        const butlerReply = aiErrorFor(new AIUnavailableError('No AI is configured — add the free NVIDIA key in Admin → NVIDIA, or a paid key in Admin → AI Assistant.'), auth.role);
         res.write(`data: ${JSON.stringify({ type: 'text', text: butlerReply })}\n\n`);
         res.write('data: [DONE]\n\n');
         return res.end();
@@ -1276,7 +1279,7 @@ export function registerAIChatRoutes({
         logger.warn({ attempts: free.attempts, userId: auth.userId }, 'chat_free_models_failed');
         if (!apiKey) {
           span.end({ status: 'error', provider: 'nvidia', model: 'ladder', attempts: free.attempts, guard: guardOrNull(), error: free.error });
-          send({ type: 'text', text: `\n\nThe free AI models are not answering right now and no paid AI key is configured. (${free.error})` });
+          send({ type: 'text', text: `\n\n${aiErrorFor(new AIUnavailableError(`The free models did not answer and no paid AI key is set: ${free.error}`), auth.role)}` });
           res.write('data: [DONE]\n\n');
           res.end();
           return;
@@ -1428,11 +1431,12 @@ export function registerAIChatRoutes({
       res.write('data: [DONE]\n\n');
       res.end();
     } catch (error: any) {
-      logger.error('AI chat error:', error);
+      logger.error({ err: error, detail: aiErrorDetail(error) }, 'ai_chat_error');
+      const shown = aiErrorFor(error, role);
       if (!res.headersSent) {
-        return res.status(500).json({ success: false, error: error?.message || 'AI request failed' });
+        return res.status(500).json({ success: false, error: shown });
       }
-      res.write(`data: ${JSON.stringify({ error: error?.message || 'AI request failed' })}\n\n`);
+      res.write(`data: ${JSON.stringify({ error: shown })}\n\n`);
       res.end();
     }
   });
@@ -1621,7 +1625,7 @@ Rules:
         } catch (err) {
           logger.warn({ err: err instanceof Error ? err.message : err }, 'team_synthesis_free_failed');
           if (!isPaidKey(apiKey)) {
-            send({ type: 'text', text: 'The free AI models are not answering right now and no paid AI key is configured.' });
+            send({ type: 'text', text: AI_UNAVAILABLE_TEXT });
             synthesisDone = true;
           }
         }

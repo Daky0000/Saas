@@ -227,7 +227,7 @@ test('callAINonStreaming: when every free rung fails with no paid key, the error
   await withNvidia([() => json(504, {}), () => json(504, {}), () => json(504, {})], async () => {
     await assert.rejects(
       helpers.callAINonStreaming('anthropic', helpers.NVIDIA_FREE_ONLY, 'claude-sonnet-5', 'sys', `fail ${Math.random()}`, 200, { userId: null, feature: 'test_fail', skipCache: true }),
-      /no paid AI key/,
+      (err: any) => err.message === helpers.AI_UNAVAILABLE_MESSAGE && /no paid AI key/.test(err.detail),
     );
   });
   const [t] = trace.recentTraces().filter((r) => r.feature === 'test_fail');

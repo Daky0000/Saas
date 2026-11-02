@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { dbQuery, hasDatabase } from '../db.ts';
 import { logger } from '../logger.ts';
-import { callAINonStreaming, getAIConfig, resolveTextKey, looksLikeJsonObject, FAST_MODEL } from '../ai-helpers.ts';
+import { aiErrorDetail, callAINonStreaming, getAIConfig, resolveTextKey, looksLikeJsonObject, FAST_MODEL } from '../ai-helpers.ts';
 import { ToolGuard, canaryLine, checkOutput, fence, makeCanary, scanForInjection } from './aiGuard.ts';
 import { classifyTask, routePaidModel } from './aiRouting.ts';
 
@@ -223,7 +223,7 @@ export async function runLiveSuite(): Promise<EvalRun> {
       const g = await c.grade(out, { canary });
       results.push({ id: c.id, pass: g === true, detail: g === true ? 'ok' : g, ms: Date.now() - t, output: out.slice(0, 600) });
     } catch (err) {
-      results.push({ id: c.id, pass: false, detail: `error: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300), ms: Date.now() - t });
+      results.push({ id: c.id, pass: false, detail: `error: ${aiErrorDetail(err)}`.slice(0, 300), ms: Date.now() - t });
     }
   }
   return finish('live', results);
