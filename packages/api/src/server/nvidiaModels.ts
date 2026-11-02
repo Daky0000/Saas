@@ -58,11 +58,14 @@ export const IMAGE_MODELS: ImageModel[] = [
  * `organise`/`triage` ladder (classification, extraction, short structured
  * answers) — the small fast model first, which buys latency, not money.
  */
-export type NvidiaJob = 'text' | 'fast';
+export type NvidiaJob = 'text' | 'fast' | 'agent';
 
 export const DEFAULT_LADDERS: Record<NvidiaJob | 'image', string[]> = {
   text: ['moonshotai/kimi-k3', 'nvidia/nemotron-3-super-120b-a12b', 'openai/gpt-oss-120b'],
   fast: ['openai/gpt-oss-20b', 'google/diffusiongemma-26b-a4b-it', 'nvidia/nemotron-3-super-120b-a12b'],
+  // The OS workforce ladder: every rung a verified tool-caller that holds a
+  // long conversation. Kimi K3 leads, built for long-horizon agentic use.
+  agent: ['moonshotai/kimi-k3', 'nvidia/nemotron-3-super-120b-a12b', 'openai/gpt-oss-120b'],
   image: ['black-forest-labs/flux.2-klein-4b'],
 };
 
@@ -99,6 +102,7 @@ export async function getNvidiaConfig(fresh = false): Promise<NvidiaConfig> {
     ladders: {
       text: parseLadder(cfg.textModels, DEFAULT_LADDERS.text),
       fast: parseLadder(cfg.fastModels, DEFAULT_LADDERS.fast),
+      agent: parseLadder(cfg.agentModels, DEFAULT_LADDERS.agent),
       image: parseLadder(cfg.imageModels, DEFAULT_LADDERS.image),
     },
   };
@@ -151,6 +155,8 @@ export interface NvidiaChatResult { text: string; model: string; inputTokens: nu
 export async function nvidiaChat(params: {
   system: string; user: string; maxTokens: number; job: NvidiaJob;
   config?: NvidiaConfig; fetchImpl?: typeof fetch;
+  /** Rejects an answer the caller cannot use (e.g. unparseable JSON); the next rung is tried. */
+  accept?: (text: string) => boolean;
 }): Promise<NvidiaChatResult> {
   const config = params.config ?? await getNvidiaConfig();
   if (!config.apiKey) throw new NvidiaError('No NVIDIA key is set (Admin → NVIDIA).', []);
@@ -158,42 +164,184 @@ export async function nvidiaChat(params: {
   const effort = params.job === 'fast' ? 'low' : 'medium';
   const attempts: Array<{ model: string; error: string }> = [];
   for (const model of config.ladders[params.job]) {
-    const known = FREE_MODELS.find((m) => m.id === model);
-    const reasons = known ? known.reasoning : true;
-    const body = {
-      model,
-      max_tokens: Math.min(params.maxTokens + (reasons ? REASONING_HEADROOM[effort] : 0), MAX_TOKENS_CEILING),
-      messages: [{ role: 'system', content: params.system }, { role: 'user', content: params.user }],
-      ...(reasons ? { reasoning_effort: effort } : {}),
-    };
-    try {
-      const res = await doFetch(`${NVIDIA_CHAT_BASE()}/chat/completions`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${config.apiKey}`, 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(FREE_TIMEOUT_MS),
-      });
-      const raw = await res.text();
-      if (!res.ok) {
-        attempts.push({ model, error: describeHttp(res.status, raw) });
-        if (res.status === 401 || res.status === 403) break;
-        continue;
-      }
-      const json = JSON.parse(raw);
-      const text = assistantText(json?.choices?.[0]?.message).trim();
-      if (!text) { attempts.push({ model, error: `empty answer (finish_reason ${json?.choices?.[0]?.finish_reason ?? 'unknown'})` }); continue; }
-      return {
-        text,
-        model,
-        inputTokens: Number(json?.usage?.prompt_tokens) || Math.ceil((params.system.length + params.user.length) / 4),
-        outputTokens: Number(json?.usage?.completion_tokens) || Math.ceil(text.length / 4),
-        attempts,
-      };
-    } catch (err: any) {
-      attempts.push({ model, error: err?.name === 'TimeoutError' ? 'timed out after 60 s' : (err?.message || 'network error') });
+    const turn = await completeOnce(doFetch, config.apiKey, model, effort, params.maxTokens,
+      [{ role: 'system', content: params.system }, { role: 'user', content: params.user }]);
+    if (!turn.ok) {
+      attempts.push({ model, error: turn.error });
+      if (turn.keyRefused) break;
+      continue;
     }
+    const text = assistantText(turn.message).trim();
+    if (!text) { attempts.push({ model, error: `empty answer (finish_reason ${turn.finishReason ?? 'unknown'})` }); continue; }
+    if (params.accept && !params.accept(text)) { attempts.push({ model, error: 'answer was not in the required format' }); continue; }
+    return {
+      text,
+      model,
+      inputTokens: turn.inputTokens || Math.ceil((params.system.length + params.user.length) / 4),
+      outputTokens: turn.outputTokens || Math.ceil(text.length / 4),
+      attempts,
+    };
   }
   throw new NvidiaError(`Free NVIDIA models did not answer: ${attempts.map((a) => `${a.model} — ${a.error}`).join('; ') || 'no models in the ladder'}`, attempts);
+}
+
+type TurnResult =
+  | { ok: true; message: any; finishReason?: string; inputTokens: number; outputTokens: number }
+  | { ok: false; error: string; keyRefused: boolean };
+
+/** One chat-completions request to one model, with the OS wire rules. Never throws. */
+async function completeOnce(
+  doFetch: typeof fetch, apiKey: string, model: string, effort: 'low' | 'medium', maxTokens: number,
+  messages: any[], tools?: any[],
+): Promise<TurnResult> {
+  const known = FREE_MODELS.find((m) => m.id === model);
+  const reasons = known ? known.reasoning : true;
+  const body = {
+    model,
+    max_tokens: Math.min(maxTokens + (reasons ? REASONING_HEADROOM[effort] : 0), MAX_TOKENS_CEILING),
+    messages,
+    ...(tools?.length ? { tools, tool_choice: 'auto' } : {}),
+    ...(reasons ? { reasoning_effort: effort } : {}),
+  };
+  try {
+    const res = await doFetch(`${NVIDIA_CHAT_BASE()}/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(FREE_TIMEOUT_MS),
+    });
+    const raw = await res.text();
+    if (!res.ok) return { ok: false, error: describeHttp(res.status, raw), keyRefused: res.status === 401 || res.status === 403 };
+    const json = JSON.parse(raw);
+    return {
+      ok: true,
+      message: json?.choices?.[0]?.message ?? {},
+      finishReason: json?.choices?.[0]?.finish_reason,
+      inputTokens: Number(json?.usage?.prompt_tokens) || 0,
+      outputTokens: Number(json?.usage?.completion_tokens) || 0,
+    };
+  } catch (err: any) {
+    return { ok: false, error: err?.name === 'TimeoutError' ? 'timed out after 60 s' : (err?.message || 'network error'), keyRefused: false };
+  }
+}
+
+export interface AgentTool { name: string; description?: string; input_schema: unknown }
+
+export type AgentLoopResult =
+  | { ok: true; model: string; inputTokens: number; outputTokens: number; attempts: Array<{ model: string; error: string }> }
+  | { ok: false; error: string; attempts: Array<{ model: string; error: string }>; brief: string; inputTokens: number; outputTokens: number };
+
+/**
+ * A tool-calling agent turn on the free `agent` ladder (OpenAI tool-call shape).
+ *
+ * A rung that fails — HTTP error, timeout, or an answer with neither text nor
+ * a tool call — hands the conversation so far to the next rung, which
+ * continues from it rather than starting again (the OS's handover rule).
+ * After the third failure it returns `ok: false` with a `brief` of what was
+ * already shown and which tools already ran, for the paid model to continue
+ * from without repeating them. Text is only emitted from completed turns, so
+ * a failure never leaves half a sentence on screen.
+ */
+export async function nvidiaAgentLoop(params: {
+  system: string;
+  history: Array<{ role: 'user' | 'assistant'; content: string }>;
+  tools: AgentTool[];
+  executeTool: (name: string, args: any) => Promise<unknown>;
+  onText?: (text: string) => void;
+  onToolStart?: (name: string, args: any) => void;
+  onToolDone?: (name: string, ok: boolean, resultOrError: unknown) => void;
+  maxIterations?: number;
+  maxTokens?: number;
+  config?: NvidiaConfig;
+  fetchImpl?: typeof fetch;
+}): Promise<AgentLoopResult> {
+  const config = params.config ?? await getNvidiaConfig();
+  const doFetch = params.fetchImpl ?? fetch;
+  const ladder = config.ladders.agent;
+  const tools = params.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description ?? '', parameters: t.input_schema } }));
+  const messages: any[] = [{ role: 'system', content: params.system }, ...params.history];
+  const attempts: Array<{ model: string; error: string }> = [];
+  const shown: string[] = [];
+  const toolLog: string[] = [];
+  let rung = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  const maxIterations = params.maxIterations ?? 5;
+
+  const fail = (error: string): AgentLoopResult => ({
+    ok: false, error, attempts, inputTokens, outputTokens,
+    brief: (shown.length || toolLog.length)
+      ? [
+        'Another model began this reply and stopped. Continue from where it stopped; do not repeat its text and do not call these tools again.',
+        shown.length ? `Already shown to the user:\n${shown.join('\n').slice(0, 3000)}` : '',
+        toolLog.length ? `Tools already run, with their results:\n${toolLog.join('\n').slice(0, 4000)}` : '',
+      ].filter(Boolean).join('\n\n')
+      : '',
+  });
+
+  if (!config.apiKey) return fail('No NVIDIA key is set (Admin → NVIDIA).');
+
+  for (let iteration = 0; iteration < maxIterations; iteration++) {
+    const last = iteration === maxIterations - 1;
+    let turn: Extract<TurnResult, { ok: true }> | null = null;
+    let model = '';
+    while (!turn) {
+      if (rung >= ladder.length) return fail(`Free NVIDIA models did not answer: ${attempts.map((a) => `${a.model} — ${a.error}`).join('; ')}`);
+      model = ladder[rung];
+      const r = await completeOnce(doFetch, config.apiKey, model, 'medium', params.maxTokens ?? 4096, messages, last ? undefined : tools);
+      if (!r.ok) {
+        attempts.push({ model, error: r.error });
+        if (r.keyRefused) rung = ladder.length; else rung++;
+        continue;
+      }
+      const hasText = Boolean(assistantText(r.message).trim());
+      const hasCalls = Array.isArray(r.message?.tool_calls) && r.message.tool_calls.length > 0;
+      if (!hasText && !hasCalls) {
+        attempts.push({ model, error: `empty answer (finish_reason ${r.finishReason ?? 'unknown'})` });
+        rung++;
+        continue;
+      }
+      turn = r;
+    }
+    inputTokens += turn.inputTokens;
+    outputTokens += turn.outputTokens;
+    const text = assistantText(turn.message).trim();
+    const calls: any[] = Array.isArray(turn.message?.tool_calls) ? turn.message.tool_calls : [];
+    if (text) { shown.push(text); params.onText?.(text); }
+    messages.push({ role: 'assistant', content: text || null, ...(calls.length ? { tool_calls: calls } : {}) });
+    if (!calls.length) return { ok: true, model, inputTokens, outputTokens, attempts };
+
+    for (const call of calls) {
+      const name = String(call?.function?.name ?? '');
+      let args: any = {};
+      let parseError = '';
+      const rawArgs = call?.function?.arguments;
+      if (typeof rawArgs === 'string' && rawArgs.trim()) {
+        try { args = JSON.parse(rawArgs); } catch { parseError = 'The tool arguments were not valid JSON.'; }
+      } else if (rawArgs && typeof rawArgs === 'object') {
+        args = rawArgs;
+      }
+      let content: string;
+      if (parseError) {
+        content = `Error: ${parseError}`;
+      } else {
+        params.onToolStart?.(name, args);
+        try {
+          const result = await params.executeTool(name, args);
+          params.onToolDone?.(name, true, result);
+          content = JSON.stringify(result);
+        } catch (err: any) {
+          const message = err?.message || 'Tool failed';
+          params.onToolDone?.(name, false, message);
+          content = `Error: ${message}`;
+        }
+      }
+      toolLog.push(`- ${name}(${JSON.stringify(args).slice(0, 300)}) → ${content.slice(0, 600)}`);
+      messages.push({ role: 'tool', tool_call_id: String(call?.id ?? name), content });
+    }
+  }
+  const model = ladder[Math.min(rung, ladder.length - 1)];
+  return { ok: true, model, inputTokens, outputTokens, attempts };
 }
 
 const NVCF_POLL_ATTEMPTS = 12;

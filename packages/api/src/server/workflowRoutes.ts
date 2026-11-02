@@ -1,9 +1,8 @@
 import express from 'express';
-import { FAST_MODEL, recordAIUsage, hasAICredits, chargeAICredits } from '../ai-helpers.ts';
+import { FAST_MODEL, recordAIUsage, hasAICredits, chargeAICredits, callAINonStreaming, resolveTextKey } from '../ai-helpers.ts';
 import type { Router, Response } from 'express';
 import type { Request } from '../types/http.ts';
 import { randomUUID } from 'crypto';
-import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '../logger.ts';
 import { decryptPlatformConfig } from '../integration-helpers.ts';
 import {
@@ -22,6 +21,7 @@ interface AIConfig {
   provider: 'anthropic' | 'google';
   encryptedKey: string | null;
   googleEncryptedKey: string | null;
+  nvidiaReady?: boolean;
 }
 
 interface WorkflowDeps {
@@ -48,7 +48,7 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
   fireWorkflowTriggers: (userId: string, eventType: string, triggerData: Record<string, any>) => Promise<void>;
   workflowRouter: Router;
 } {
-  const { requireAuth, hasDatabase, dbQuery, enqueueSocialAutomationTask, getAIConfig, resolveActiveKey } = deps;
+  const { requireAuth, hasDatabase, dbQuery, enqueueSocialAutomationTask, getAIConfig } = deps;
   const router = express.Router();
 
   async function executeWorkflowOnce(
@@ -154,38 +154,17 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
             } else if (postTitle) {
               try {
                 const aiCfg = await getAIConfig();
-                const apiKey = resolveActiveKey(aiCfg);
+                // Free NVIDIA ladder first, then the paid vendor (callAINonStreaming does both).
+                const apiKey = resolveTextKey(aiCfg);
                 let imagePrompt = postTitle;
                 if (apiKey) {
-                  if (aiCfg.provider === 'google') {
-                    const { GoogleGenerativeAI } = await import('@google/generative-ai') as any;
-                    const genai = new GoogleGenerativeAI(apiKey);
-                    const model = genai.getGenerativeModel({ model: 'gemini-2.0-flash' });
-                    const resp = await model.generateContent(
-                      `Write a vivid, creative-director intent prompt for Magnific One for a post titled "${postTitle}".${postExcerpt ? ` Context: ${postExcerpt.slice(0, 200)}` : ''} Keep it under 80 words, no --ar flags.`
-                    );
-                    imagePrompt = resp.response.text().trim() || postTitle;
-                    void recordAIUsage({
-                      userId, feature: 'workflow_ai_image_prompt', provider: 'google', model: 'gemini-2.0-flash',
-                      inputTokens: resp.response.usageMetadata?.promptTokenCount ?? 0,
-                      outputTokens: resp.response.usageMetadata?.candidatesTokenCount ?? 0,
-                    });
-                  } else {
-                    const anthropic = new Anthropic({ apiKey });
-                    const resp = await anthropic.messages.create({
-                      model: FAST_MODEL,
-                      max_tokens: 150,
-                      messages: [{
-                        role: 'user',
-                        content: `Write a vivid, creative-director intent prompt for Magnific One for a post titled "${postTitle}".${postExcerpt ? ` Context: ${postExcerpt.slice(0, 200)}` : ''} Keep it under 80 words, no --ar flags.`,
-                      }],
-                    });
-                    imagePrompt = (resp.content[0] as any)?.text?.trim() || postTitle;
-                    void recordAIUsage({
-                      userId, feature: 'workflow_ai_image_prompt', provider: 'anthropic', model: FAST_MODEL,
-                      inputTokens: resp.usage.input_tokens, outputTokens: resp.usage.output_tokens,
-                    });
-                  }
+                  imagePrompt = (await callAINonStreaming(
+                    aiCfg.provider, apiKey, aiCfg.provider === 'google' ? 'gemini-2.0-flash' : FAST_MODEL,
+                    'You are a creative director writing image-generation prompts.',
+                    `Write a vivid, creative-director intent prompt for Magnific One for a post titled "${postTitle}".${postExcerpt ? ` Context: ${postExcerpt.slice(0, 200)}` : ''} Keep it under 80 words, no --ar flags.`,
+                    150,
+                    { userId, feature: 'workflow_ai_image_prompt', nvidiaJob: 'text', skipCache: true },
+                  )).trim() || postTitle;
                 }
                 // Resolve Magnific API key and render via Magnific One / Magnific Image
                 const { rows: magCfg } = await dbQuery(`SELECT config FROM platform_configs WHERE platform = 'magnific' LIMIT 1`).catch(() => ({ rows: [] as any[] }));

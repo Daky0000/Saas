@@ -81,6 +81,101 @@ test('model tier maps to the OS ladders', () => {
   assert.equal(nv.jobForModel('claude-opus-4-8'), 'text');
 });
 
+test('agent loop: runs tools on the free model and returns its answer', async () => {
+  const bodies: any[] = [];
+  const replies = [
+    json(200, { choices: [{ message: { content: 'Checking.', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'list_posts', arguments: '{"limit":2}' } }] } }] }),
+    json(200, { choices: [{ message: { content: 'You have 2 posts.' } }] }),
+  ];
+  const fetchImpl = (async (_u: string, init: any) => { bodies.push(JSON.parse(init.body)); return replies.shift()!; }) as any;
+  const shown: string[] = [];
+  const ran: any[] = [];
+  const r = await nv.nvidiaAgentLoop({
+    system: 's', history: [{ role: 'user', content: 'how many posts?' }],
+    tools: [{ name: 'list_posts', description: 'd', input_schema: { type: 'object' } }],
+    executeTool: async (name, args) => { ran.push([name, args]); return { count: 2 }; },
+    onText: (t) => shown.push(t), config: config(), fetchImpl,
+  });
+  assert.equal(r.ok, true);
+  assert.deepEqual(ran, [['list_posts', { limit: 2 }]]);
+  assert.deepEqual(shown, ['Checking.', 'You have 2 posts.']);
+  assert.equal(bodies[0].model, 'moonshotai/kimi-k3');
+  assert.equal(bodies[0].tools[0].function.name, 'list_posts');
+  const toolMsg = bodies[1].messages.find((m: any) => m.role === 'tool');
+  assert.equal(toolMsg.tool_call_id, 'c1');
+  assert.equal(toolMsg.content, '{"count":2}');
+});
+
+test('agent loop: a failing rung hands the conversation to the next one, tools already run are not repeated', async () => {
+  const models: string[] = [];
+  const replies = [
+    json(200, { choices: [{ message: { content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'save', arguments: '{}' } }] } }] }),
+    json(504, { detail: 'timeout' }),
+    json(200, { choices: [{ message: { content: 'Saved.' } }] }),
+  ];
+  const fetchImpl = (async (_u: string, init: any) => { const b = JSON.parse(init.body); models.push(b.model); return replies.shift()!; }) as any;
+  let runs = 0;
+  const r = await nv.nvidiaAgentLoop({
+    system: 's', history: [{ role: 'user', content: 'save it' }],
+    tools: [{ name: 'save', input_schema: { type: 'object' } }],
+    executeTool: async () => { runs++; return { ok: true }; }, config: config(), fetchImpl,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(runs, 1);
+  assert.deepEqual(models, ['moonshotai/kimi-k3', 'moonshotai/kimi-k3', 'nvidia/nemotron-3-super-120b-a12b']);
+});
+
+test('agent loop: after three failed tries it stops and briefs the paid model on work already done', async () => {
+  const replies = [
+    json(200, { choices: [{ message: { content: 'Drafting now.', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'create_draft', arguments: '{"title":"Hi"}' } }] } }] }),
+    json(500, {}), json(503, {}), json(429, {}),
+  ];
+  let calls = 0;
+  const fetchImpl = (async () => { calls++; return replies.shift()!; }) as any;
+  const r = await nv.nvidiaAgentLoop({
+    system: 's', history: [{ role: 'user', content: 'draft' }],
+    tools: [{ name: 'create_draft', input_schema: { type: 'object' } }],
+    executeTool: async () => ({ id: 'draft-9' }), config: config(), fetchImpl,
+  });
+  assert.equal(r.ok, false);
+  assert.equal(calls, 4, 'one success, then one failed try on each of the three rungs');
+  if (!r.ok) {
+    assert.equal(r.attempts.length, 3);
+    assert.match(r.brief, /Drafting now\./);
+    assert.match(r.brief, /create_draft\(\{"title":"Hi"\}\) → \{"id":"draft-9"\}/);
+    assert.match(r.brief, /do not call these tools again/);
+  }
+});
+
+test('freeFirst: three failed free tries, then the paid call; an unusable answer counts as a failed try', async () => {
+  process.env.NVIDIA_API_KEY = 'nvapi-test';
+  const ai = await import('../src/ai-helpers.ts');
+  nv.invalidateNvidiaConfig();
+  const realFetch = globalThis.fetch;
+  try {
+    let freeCalls = 0;
+    globalThis.fetch = (async () => { freeCalls++; return json(200, { choices: [{ message: { content: 'not json at all' } }] }); }) as any;
+    let paidCalls = 0;
+    const out = await ai.freeFirst(
+      { system: 's', user: 'u', maxTokens: 50, job: 'agent', userId: null, feature: 't', accept: (t) => t.trim().startsWith('{') },
+      async () => { paidCalls++; return '{"from":"paid"}'; },
+    );
+    assert.equal(out, '{"from":"paid"}');
+    assert.equal(freeCalls, 3);
+    assert.equal(paidCalls, 1);
+
+    globalThis.fetch = (async () => json(200, { choices: [{ message: { content: '{"from":"free"}' } }] })) as any;
+    paidCalls = 0;
+    const free = await ai.freeFirst({ system: 's', user: 'u', maxTokens: 50, userId: null, feature: 't' }, async () => { paidCalls++; return 'paid'; });
+    assert.equal(free, '{"from":"free"}');
+    assert.equal(paidCalls, 0, 'paid is never asked when a free model answers');
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.NVIDIA_API_KEY;
+    nv.invalidateNvidiaConfig();
+  }
+});
+
 // Through the real shared call: free first, paid only when every rung failed.
 test('callAINonStreaming: answers from NVIDIA when it works; free-only key fails clearly when it does not', async () => {
   process.env.NVIDIA_API_KEY = 'nvapi-test';

@@ -8,7 +8,7 @@ import { getApiBaseUrl } from '../../utils/apiBase';
 // content-plan images try FLUX before Gemini/OpenAI.
 
 type CatalogueModel = { id: string; name: string; down?: string };
-type Ladders = { text: string[]; fast: string[]; image: string[] };
+type Ladders = { text: string[]; fast: string[]; agent: string[]; image: string[] };
 type Config = {
   hasKey: boolean; maskedKey: string; keySource: 'admin' | 'env' | null; enabled: boolean;
   ladders: Ladders; defaults: Ladders;
@@ -20,6 +20,7 @@ const tok = () => localStorage.getItem('auth_token') ?? '';
 const LADDER_INFO: Record<keyof Ladders, { label: string; note: string }> = {
   text: { label: 'Writing', note: 'Post copy, captions, campaign text — anything a customer reads.' },
   fast: { label: 'Quick tasks', note: 'Classifying, extracting, short structured answers. Small fast model first.' },
+  agent: { label: 'Agents', note: 'The assistant chat, the AI team, Nova and the other agents. Every model here must call tools; after three failed tries the paid model takes over and continues.' },
   image: { label: 'Images', note: 'Content-plan featured images when Magnific is not set or fails. Only FLUX.2 Klein serves today.' },
 };
 
@@ -31,6 +32,7 @@ export default function AdminNvidia() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [results, setResults] = useState<TestResult[] | null>(null);
+  const [toolResults, setToolResults] = useState<TestResult[] | null>(null);
   const [imgTesting, setImgTesting] = useState(false);
   const [imgResult, setImgResult] = useState<{ ok: boolean; text: string; preview?: string } | null>(null);
 
@@ -54,11 +56,11 @@ export default function AdminNvidia() {
   }
 
   async function runTest() {
-    setTesting(true); setResults(null);
+    setTesting(true); setResults(null); setToolResults(null);
     try {
       const r = await fetch(`${getApiBaseUrl()}/api/admin/nvidia/test`, { method: 'POST', headers });
       const d = await r.json();
-      if (Array.isArray(d.results)) setResults(d.results);
+      if (Array.isArray(d.results)) { setResults(d.results); setToolResults(Array.isArray(d.toolResults) ? d.toolResults : null); }
       else setMsg({ ok: false, text: d.error ?? 'Test failed' });
     } catch (e: any) { setMsg({ ok: false, text: e.message }); } finally { setTesting(false); }
   }
@@ -93,7 +95,7 @@ export default function AdminNvidia() {
           <div>
             <h2 className="text-base font-bold text-slate-900">NVIDIA free models</h2>
             <p className="text-xs text-slate-500">
-              The same free models and job assignments as Dakyworld OS. Tried first for all one-shot writing, then the paid key in AI Assistant.
+              The same free models and job assignments as Dakyworld OS. Tried first for all writing and every agent; after three failed tries the paid key in AI Assistant takes over.
               One key works for every model — get it at <a className="underline" href="https://build.nvidia.com/settings/api-keys" target="_blank" rel="noreferrer">build.nvidia.com</a> (the same key the OS uses).
             </p>
           </div>
@@ -122,7 +124,7 @@ export default function AdminNvidia() {
 
         <div className="mt-4 flex flex-wrap gap-2">
           <button type="button" disabled={testing || !cfg.hasKey} onClick={() => void runTest()} className={`${btn} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50`}>
-            {testing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Test every writing model
+            {testing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Test every model
           </button>
           <button type="button" disabled={imgTesting || !cfg.hasKey} onClick={() => void runImageTest()} className={`${btn} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50`}>
             {imgTesting ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} />} Test image
@@ -131,6 +133,19 @@ export default function AdminNvidia() {
         {results && (
           <div className="mt-3 space-y-1">
             {results.map((r) => (
+              <div key={r.model} className="flex items-start gap-2 text-xs">
+                {r.ok ? <CheckCircle2 size={13} className="mt-0.5 text-green-500 shrink-0" /> : <XCircle size={13} className="mt-0.5 text-red-500 shrink-0" />}
+                <span className="font-mono text-slate-700">{r.model}</span>
+                <span className="text-slate-400">{(r.ms / 1000).toFixed(1)} s</span>
+                {!r.ok && <span className="text-red-500">{r.error}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+        {toolResults && (
+          <div className="mt-3 space-y-1">
+            <p className="text-xs font-semibold text-slate-600">Agents — tool calling</p>
+            {toolResults.map((r) => (
               <div key={r.model} className="flex items-start gap-2 text-xs">
                 {r.ok ? <CheckCircle2 size={13} className="mt-0.5 text-green-500 shrink-0" /> : <XCircle size={13} className="mt-0.5 text-red-500 shrink-0" />}
                 <span className="font-mono text-slate-700">{r.model}</span>
@@ -169,9 +184,9 @@ export default function AdminNvidia() {
           );
         })}
         <div className="flex flex-wrap gap-2">
-          <button type="button" disabled={saving} onClick={() => void save({ textModels: ladders.text, fastModels: ladders.fast, imageModels: ladders.image }, 'Model order saved.')}
+          <button type="button" disabled={saving} onClick={() => void save({ textModels: ladders.text, fastModels: ladders.fast, agentModels: ladders.agent, imageModels: ladders.image }, 'Model order saved.')}
             className={`${btn} bg-slate-950 text-white hover:bg-slate-800`}>{saving ? <Loader2 size={14} className="animate-spin" /> : null}Save model order</button>
-          <button type="button" disabled={saving} onClick={() => void save({ textModels: [], fastModels: [], imageModels: [] }, 'Restored the OS defaults.')}
+          <button type="button" disabled={saving} onClick={() => void save({ textModels: [], fastModels: [], agentModels: [], imageModels: [] }, 'Restored the OS defaults.')}
             className={`${btn} border border-slate-200 text-slate-600 hover:bg-slate-50`}>Restore OS defaults</button>
         </div>
       </div>

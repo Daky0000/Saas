@@ -7,7 +7,7 @@ import { recordAuditLog } from '../link-metadata.ts';
 import { encryptPlatformConfig, decryptPlatformConfig } from '../integration-helpers.ts';
 import {
   DEFAULT_LADDERS, FREE_MODELS, IMAGE_MODELS, LADDER_MAX,
-  getNvidiaConfig, invalidateNvidiaConfig, nvidiaChat, nvidiaImage, type NvidiaConfig,
+  getNvidiaConfig, invalidateNvidiaConfig, nvidiaAgentLoop, nvidiaChat, nvidiaImage, type NvidiaConfig,
 } from './nvidiaModels.ts';
 
 // Admin → NVIDIA: the key, the on/off switch for the free tier, and which free
@@ -60,6 +60,7 @@ export function registerNvidiaRoutes({ requireAdmin, hasDatabase, pool }: Deps):
       if (typeof b.enabled === 'boolean') next.enabled = String(b.enabled);
       const text = cleanLadder(b.textModels); if (text !== undefined) next.textModels = text;
       const fast = cleanLadder(b.fastModels); if (fast !== undefined) next.fastModels = fast;
+      const agent = cleanLadder(b.agentModels); if (agent !== undefined) next.agentModels = agent;
       const image = cleanLadder(b.imageModels); if (image !== undefined) next.imageModels = image;
       if (image) {
         const unknown = image.split(',').filter((id) => !IMAGE_MODELS.some((m) => m.id === id));
@@ -99,7 +100,23 @@ export function registerNvidiaRoutes({ requireAdmin, hasDatabase, pool }: Deps):
         return { model, ok: false, ms: Date.now() - started, error: e?.attempts?.[0]?.error || e?.message || 'failed' };
       }
     }));
-    return res.json({ success: results.some((r) => r.ok), results });
+    // Agents need tool calling, so each agent model must actually call one.
+    const toolResults = await Promise.all(cfg.ladders.agent.map(async (model) => {
+      const started = Date.now();
+      let called = false;
+      const r = await nvidiaAgentLoop({
+        system: 'You test tool calling. Call the get_time tool exactly once, then reply with the single word DONE.',
+        history: [{ role: 'user', content: 'What time is it? Use the tool.' }],
+        tools: [{ name: 'get_time', description: 'Returns the current time.', input_schema: { type: 'object', properties: {}, additionalProperties: false } }],
+        executeTool: async () => { called = true; return { time: new Date().toISOString() }; },
+        maxIterations: 3, maxTokens: 64,
+        config: { ...cfg, ladders: { ...cfg.ladders, agent: [model] } },
+      });
+      return r.ok && called
+        ? { model, ok: true, ms: Date.now() - started, reply: 'called a tool' }
+        : { model, ok: false, ms: Date.now() - started, error: r.ok ? 'answered without calling the tool' : (r.attempts[0]?.error || r.error) };
+    }));
+    return res.json({ success: results.some((r) => r.ok), results, toolResults });
   });
 
   // One small picture through the image ladder, returned for preview.

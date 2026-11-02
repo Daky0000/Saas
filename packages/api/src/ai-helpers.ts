@@ -79,6 +79,35 @@ export const NVIDIA_FREE_ONLY = 'nvidia-free-only';
  * or NVIDIA_FREE_ONLY when there is none but the free models are on — so
  * content can be generated with no paid vendor at all.
  */
+/** A real vendor key (not empty, not the free-only stand-in). */
+export function isPaidKey(key: string | null | undefined): key is string {
+  return Boolean(key) && key !== NVIDIA_FREE_ONLY;
+}
+
+/**
+ * For agents that call a vendor SDK directly: the free NVIDIA ladder first
+ * (three models, one try each), then `paid` — the agent's own Claude/Gemini
+ * call — only when all three failed. `paid` is null when no paid key exists.
+ */
+export async function freeFirst(
+  req: { system: string; user: string; maxTokens: number; job?: 'text' | 'fast' | 'agent'; userId: string | null; feature: string; accept?: (text: string) => boolean },
+  paid: (() => Promise<string>) | null,
+): Promise<string> {
+  const nvidia = await getNvidiaConfig().catch(() => null);
+  if (nvidia?.enabled && nvidia.apiKey) {
+    try {
+      const r = await nvidiaChat({ system: req.system, user: req.user, maxTokens: req.maxTokens, job: req.job ?? 'text', config: nvidia, accept: req.accept });
+      void recordAIUsage({ userId: req.userId, feature: req.feature, provider: 'nvidia', model: r.model, inputTokens: r.inputTokens, outputTokens: r.outputTokens });
+      return r.text;
+    } catch (err) {
+      if (!paid) throw new Error(`${err instanceof Error ? err.message : 'Free NVIDIA models failed'} — and no paid AI key is set in Admin → AI Assistant to fall back to.`);
+      logger.warn({ err: err instanceof Error ? err.message : err, feature: req.feature }, 'nvidia_free_failed_using_paid');
+    }
+  }
+  if (!paid) throw new Error('No AI is configured — add the free NVIDIA key in Admin → NVIDIA, or a paid key in Admin → AI Assistant.');
+  return paid();
+}
+
 export function resolveTextKey(config: { provider: 'anthropic' | 'google'; encryptedKey: string | null; googleEncryptedKey: string | null; nvidiaReady?: boolean }): string {
   return resolveActiveKey(config) || (config.nvidiaReady ? NVIDIA_FREE_ONLY : '');
 }
@@ -241,7 +270,7 @@ export async function callAINonStreaming(
   systemPrompt: string,
   userMessage: string,
   maxTokens = 400,
-  usageMeta?: { userId: string | null; feature: string; skipCache?: boolean; cacheTtlMs?: number; /** Which free NVIDIA ladder; defaults from the model tier. */ nvidiaJob?: 'text' | 'fast' },
+  usageMeta?: { userId: string | null; feature: string; skipCache?: boolean; cacheTtlMs?: number; /** Which free NVIDIA ladder; defaults from the model tier. */ nvidiaJob?: 'text' | 'fast'; /** Already inside a free-first fallback: go straight to the paid vendor. */ skipFree?: boolean },
 ): Promise<string> {
   const cacheKey = createHash('sha256')
     .update(`${provider}:${model}:${maxTokens}:${systemPrompt}:${userMessage}`)
@@ -262,7 +291,7 @@ export async function callAINonStreaming(
 
   // Free first, as in Dakyworld OS: the job's ladder of free NVIDIA models,
   // then the paid vendor below only if every rung failed.
-  const nvidia = await getNvidiaConfig().catch(() => null);
+  const nvidia = usageMeta?.skipFree ? null : await getNvidiaConfig().catch(() => null);
   if (nvidia?.enabled && nvidia.apiKey) {
     try {
       const r = await nvidiaChat({ system: systemPrompt, user: userMessage, maxTokens, job: usageMeta?.nvidiaJob ?? jobForModel(model), config: nvidia });

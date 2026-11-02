@@ -5,7 +5,8 @@ import { randomUUID } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger } from '../logger.ts';
-import { resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits, recordFastPathSavings, chargeAICredits } from '../ai-helpers.ts';
+import { resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits, recordFastPathSavings, chargeAICredits, resolveTextKey, isPaidKey } from '../ai-helpers.ts';
+import { nvidiaAgentLoop, nvidiaChat } from './nvidiaModels.ts';
 import { buildSharedAgentContext, recordAgentInsight } from './agentSharedContext.ts';
 import { aiChatLimiter } from '../middleware/rateLimiter.ts';
 import { decryptPlatformConfig } from '../integration-helpers.ts';
@@ -34,6 +35,7 @@ interface AIConfig {
   encryptedKey: string | null;
   googleEncryptedKey: string | null;
   systemPrompt: string | null;
+  nvidiaReady?: boolean;
 }
 
 interface AIChatDeps {
@@ -1143,7 +1145,7 @@ export function registerAIChatRoutes({
 
       const aiCfg = await getAIConfig();
       const apiKey = resolveActiveKey(aiCfg);
-      if (!apiKey) {
+      if (!apiKey && !aiCfg.nvidiaReady) {
         // Local dev Butler fallback so SSE chat works out of the box even before an API key is configured
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
@@ -1189,13 +1191,42 @@ export function registerAIChatRoutes({
         (aiCfg.systemPrompt || AI_SYSTEM_PROMPT_DEFAULT).replace('{USER_MEMORY}', '(See the ABOUT THIS USER section at the end of this prompt.)'),
         AI_CORE_RULES,
       ].join('\n\n');
-      const dynamicPrompt = [userMemoryBlock, saasContext, skillsPrompt].filter(Boolean).join('\n\n');
+      let dynamicPrompt = [userMemoryBlock, saasContext, skillsPrompt].filter(Boolean).join('\n\n');
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
 
       const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+      // ── Free first: the NVIDIA agent ladder (three models, one try each) ────
+      // with the same tools. Only if all three fail does the paid model below
+      // take over, told what was already shown and which tools already ran.
+      if (aiCfg.nvidiaReady) {
+        const free = await nvidiaAgentLoop({
+          system: `${stablePrompt}\n\n${dynamicPrompt}`,
+          history: messages.slice(-16).map((m) => ({ role: m.role === 'assistant' ? 'assistant' as const : 'user' as const, content: String(m.content || '').slice(0, 3500) })),
+          tools: AI_TOOLS as any,
+          executeTool: (name, args) => executeAITool(name, args, auth.userId),
+          onText: (text) => send({ type: 'text', text }),
+          onToolStart: (name, args) => send({ type: 'tool_start', name, label: aiToolLabel(name, args) }),
+          onToolDone: (name, ok, result) => send(ok ? { type: 'tool_done', name, success: true, result } : { type: 'tool_done', name, success: false, error: String(result) }),
+        });
+        if (free.ok) {
+          void recordAIUsage({ userId: auth.userId, feature: 'chat', provider: 'nvidia', model: free.model, inputTokens: free.inputTokens, outputTokens: free.outputTokens });
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+        logger.warn({ attempts: free.attempts, userId: auth.userId }, 'chat_free_models_failed');
+        if (!apiKey) {
+          send({ type: 'text', text: `\n\nThe free AI models are not answering right now and no paid AI key is configured. (${free.error})` });
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+        if (free.brief) dynamicPrompt = [dynamicPrompt, free.brief].filter(Boolean).join('\n\n');
+      }
 
       // ── Google Gemini path — streaming + function calling ───────────────────
       if (aiCfg.provider === 'google') {
@@ -1358,7 +1389,7 @@ export function registerAIChatRoutes({
       }
 
       const aiCfgOrch = await getAIConfig();
-      const apiKey = resolveActiveKey(aiCfgOrch);
+      const apiKey = resolveTextKey(aiCfgOrch);
       if (!apiKey) return res.json({ type: 'direct' });
       if (!(await hasAICredits(auth.userId))) return res.json({ type: 'direct' });
 
@@ -1415,7 +1446,9 @@ Rules:
       }
 
       const aiCfg = await getAIConfig();
-      const apiKey = resolveActiveKey(aiCfg);
+      // Each agent's analysis goes through callAINonStreaming (free first); the
+      // free-only stand-in key is enough to run the team without a paid key.
+      const apiKey = resolveTextKey(aiCfg);
       if (!apiKey) return res.status(503).json({ success: false, error: 'AI not configured' });
       if (!(await hasAICredits(auth.userId))) {
         return res.status(402).json({ success: false, error: OUT_OF_CREDITS_MSG });
@@ -1496,7 +1529,26 @@ Rules:
       const synthPrompt = `${lastUserMsg}\n\n---\nYour specialist team has analyzed this:\n\n${teamContext}\n\nSynthesize their insights into one unified, decisive recommendation. Be the orchestrator — build on their analyses, don't just repeat them.`;
 
       let synthesisText = '';
-      if (aiCfg.provider === 'google') {
+      // Free first for the synthesis too; the paid stream below only runs when
+      // all three free models failed (or the free tier is off).
+      let synthesisDone = false;
+      if (aiCfg.nvidiaReady) {
+        try {
+          const history = conversationHistory.slice(0, -1).map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`).join('\n\n');
+          const r = await nvidiaChat({ system: synthSystem, user: `${history ? `${history}\n\n` : ''}${synthPrompt}`, maxTokens: 1024, job: 'text' });
+          void recordAIUsage({ userId: auth.userId, feature: 'team_synthesis', provider: 'nvidia', model: r.model, inputTokens: r.inputTokens, outputTokens: r.outputTokens });
+          synthesisText = r.text;
+          send({ type: 'text', text: r.text });
+          synthesisDone = true;
+        } catch (err) {
+          logger.warn({ err: err instanceof Error ? err.message : err }, 'team_synthesis_free_failed');
+          if (!isPaidKey(apiKey)) {
+            send({ type: 'text', text: 'The free AI models are not answering right now and no paid AI key is configured.' });
+            synthesisDone = true;
+          }
+        }
+      }
+      if (!synthesisDone && aiCfg.provider === 'google') {
         const effectiveModel = resolveGeminiModel(aiCfg.model);
         const genAI = new GoogleGenerativeAI(apiKey);
         const gModel = genAI.getGenerativeModel({ model: effectiveModel, systemInstruction: synthSystem });
@@ -1505,7 +1557,7 @@ Rules:
           const text = chunk.text();
           if (text) { synthesisText += text; send({ type: 'text', text }); }
         }
-      } else {
+      } else if (!synthesisDone) {
         const anthropicClient = new Anthropic({ apiKey });
         const synthMessages: Anthropic.MessageParam[] = [
           ...conversationHistory.slice(0, -1),
