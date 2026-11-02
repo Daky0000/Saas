@@ -77,9 +77,23 @@ const MAX_TOKENS_CEILING = 32_000;
 
 export interface NvidiaConfig {
   apiKey: string;
-  source: 'admin' | 'env' | null;
+  /** 'os': no key here, so chat goes through Dakyworld OS, which holds the key. */
+  source: 'admin' | 'env' | 'os' | null;
   enabled: boolean;
   ladders: Record<NvidiaJob | 'image', string[]>;
+  /** Where chat completions are sent; NVIDIA itself unless source is 'os'. */
+  chatBase?: string;
+}
+
+/**
+ * Dakyworld OS proxies the free chat models for this app over the partner
+ * link (DAKYX_BASE_URL + DAKYX_PARTNER_KEY), so the Marketing SaaS can use
+ * them without its own NVIDIA key. Images (NVCF) are not proxied.
+ */
+export function osNvidiaProxy(env: NodeJS.ProcessEnv = process.env): { base: string; key: string } | null {
+  const base = env.DAKYX_BASE_URL?.trim().replace(/\/$/, '');
+  const key = env.DAKYX_PARTNER_KEY?.trim();
+  return base && key ? { base: `${base}/api/partner/v1/nvidia`, key } : null;
 }
 
 function parseLadder(raw: unknown, fallback: string[]): string[] {
@@ -89,15 +103,17 @@ function parseLadder(raw: unknown, fallback: string[]): string[] {
 
 let cached: { at: number; value: NvidiaConfig } | null = null;
 
-/** Admin → NVIDIA (platform_configs.nvidia) first, NVIDIA_API_KEY as fallback. Cached 30 s. */
+/** Admin → NVIDIA (platform_configs.nvidia) first, NVIDIA_API_KEY next, then Dakyworld OS's key through its proxy. Cached 30 s. */
 export async function getNvidiaConfig(fresh = false): Promise<NvidiaConfig> {
   if (!fresh && cached && Date.now() - cached.at < 30_000) return cached.value;
   const cfg = await getPlatformConfig('nvidia').catch(() => ({} as Record<string, string>));
   const adminKey = String(cfg.apiKey || '').trim();
   const envKey = String(process.env.NVIDIA_API_KEY || '').trim();
+  const proxy = adminKey || envKey ? null : osNvidiaProxy();
   const value: NvidiaConfig = {
-    apiKey: adminKey || envKey,
-    source: adminKey ? 'admin' : envKey ? 'env' : null,
+    apiKey: adminKey || envKey || proxy?.key || '',
+    source: adminKey ? 'admin' : envKey ? 'env' : proxy ? 'os' : null,
+    ...(proxy ? { chatBase: proxy.base } : {}),
     // On by default once a key exists; Admin can switch the free tier off.
     enabled: String(cfg.enabled ?? 'true') !== 'false',
     ladders: {
@@ -165,7 +181,7 @@ export async function nvidiaChat(params: {
   const effort = params.job === 'fast' ? 'low' : 'medium';
   const attempts: Array<{ model: string; error: string }> = [];
   for (const model of config.ladders[params.job]) {
-    const turn = await completeOnce(doFetch, config.apiKey, model, effort, params.maxTokens,
+    const turn = await completeOnce(doFetch, config, model, effort, params.maxTokens,
       [{ role: 'system', content: params.system }, { role: 'user', content: params.user }]);
     if (!turn.ok) {
       attempts.push({ model, error: turn.error });
@@ -192,7 +208,7 @@ type TurnResult =
 
 /** One chat-completions request to one model, with the OS wire rules. Never throws. */
 async function completeOnce(
-  doFetch: typeof fetch, apiKey: string, model: string, effort: 'low' | 'medium', maxTokens: number,
+  doFetch: typeof fetch, config: Pick<NvidiaConfig, 'apiKey' | 'chatBase'>, model: string, effort: 'low' | 'medium', maxTokens: number,
   messages: any[], tools?: any[],
 ): Promise<TurnResult> {
   const known = FREE_MODELS.find((m) => m.id === model);
@@ -205,9 +221,9 @@ async function completeOnce(
     ...(reasons ? { reasoning_effort: effort } : {}),
   };
   try {
-    const res = await doFetch(`${NVIDIA_CHAT_BASE()}/chat/completions`, {
+    const res = await doFetch(`${config.chatBase ?? NVIDIA_CHAT_BASE()}/chat/completions`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json', accept: 'application/json' },
+      headers: { authorization: `Bearer ${config.apiKey}`, 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(FREE_TIMEOUT_MS),
     });
@@ -289,7 +305,7 @@ export async function nvidiaAgentLoop(params: {
     while (!turn) {
       if (rung >= ladder.length) return fail(`Free NVIDIA models did not answer: ${attempts.map((a) => `${a.model} — ${a.error}`).join('; ')}`);
       model = ladder[rung];
-      const r = await completeOnce(doFetch, config.apiKey, model, 'medium', params.maxTokens ?? 4096, messages, last ? undefined : tools);
+      const r = await completeOnce(doFetch, config, model, 'medium', params.maxTokens ?? 4096, messages, last ? undefined : tools);
       if (!r.ok) {
         attempts.push({ model, error: r.error });
         if (r.keyRefused) rung = ladder.length; else rung++;
@@ -362,6 +378,7 @@ export async function nvidiaImage(params: {
 }): Promise<{ bytes: Buffer; mimeType: string; model: string }> {
   const config = params.config ?? await getNvidiaConfig();
   if (!config.apiKey) throw new NvidiaError('No NVIDIA key is set (Admin → NVIDIA).', []);
+  if (config.source === 'os') throw new NvidiaError('Free NVIDIA images need a key in Admin → NVIDIA; Dakyworld OS only shares the chat models.', []);
   const doFetch = params.fetchImpl ?? fetch;
   const { width, height } = nvidiaImageSize(params.width, params.height);
   const attempts: Array<{ model: string; error: string }> = [];

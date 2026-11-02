@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { getApiBaseUrl } from '../utils/apiBase';
+import { notifyCreditsChanged } from './CreditBadge';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -916,7 +917,8 @@ export default function ChatWidget() {
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
           const payload = line.slice(6).trim();
-          if (payload === '[DONE]') break;
+          // The reply has been charged by now; the header badge re-reads the balance.
+          if (payload === '[DONE]') { notifyCreditsChanged(); break; }
           try {
             const ev = JSON.parse(payload) as any;
             if (ev.error) throw new Error(ev.error);

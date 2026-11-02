@@ -23,6 +23,7 @@ import {
   Settings,
 } from 'lucide-react';
 import NotificationBell from './components/NotificationBell';
+import CreditBadge from './components/CreditBadge';
 import OnboardingWizard from './components/OnboardingWizard';
 import { onboardingService } from './services/onboardingService';
 import PageTour, { PAGE_GUIDES } from './components/PageTour';
@@ -1706,6 +1707,7 @@ function App() {
                     Overview
                   </button>
                 )}
+                <CreditBadge onOpen={() => navigateToPage('credits')} />
                 <NotificationBell />
                 <span className="os-topbar-date">
                   {new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date())}

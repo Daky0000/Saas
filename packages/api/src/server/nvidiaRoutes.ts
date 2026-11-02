@@ -33,7 +33,8 @@ export function registerNvidiaRoutes({ requireAdmin, hasDatabase, pool }: Deps):
   const view = (cfg: NvidiaConfig) => ({
     success: true,
     hasKey: Boolean(cfg.apiKey),
-    maskedKey: mask(cfg.apiKey),
+    // With source 'os' the "key" is the partner key, not an NVIDIA one; don't show it.
+    maskedKey: cfg.source === 'os' ? 'Dakyworld OS' : mask(cfg.apiKey),
     keySource: cfg.source,
     enabled: cfg.enabled,
     ladders: cfg.ladders,

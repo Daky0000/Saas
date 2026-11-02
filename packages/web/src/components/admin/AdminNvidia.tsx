@@ -10,7 +10,7 @@ import { getApiBaseUrl } from '../../utils/apiBase';
 type CatalogueModel = { id: string; name: string; down?: string };
 type Ladders = { text: string[]; fast: string[]; agent: string[]; image: string[] };
 type Config = {
-  hasKey: boolean; maskedKey: string; keySource: 'admin' | 'env' | null; enabled: boolean;
+  hasKey: boolean; maskedKey: string; keySource: 'admin' | 'env' | 'os' | null; enabled: boolean;
   ladders: Ladders; defaults: Ladders;
   catalogue: { chat: CatalogueModel[]; image: CatalogueModel[] };
 };
@@ -104,7 +104,7 @@ export default function AdminNvidia() {
         {cfg.hasKey && (
           <div className="flex items-center gap-2 mt-4 rounded-xl bg-white border border-slate-200 px-3 py-2.5">
             <CheckCircle2 size={14} className="text-green-500 shrink-0" />
-            <span className="text-xs text-slate-600">Current key: <span className="font-mono font-semibold">{cfg.maskedKey}</span>{cfg.keySource === 'env' && ' (from NVIDIA_API_KEY — saving here replaces it)'}</span>
+            <span className="text-xs text-slate-600">Current key: <span className="font-mono font-semibold">{cfg.maskedKey}</span>{cfg.keySource === 'env' && ' (from NVIDIA_API_KEY — saving here replaces it)'}{cfg.keySource === 'os' && ' — the OS key, shared through the partner link (chat models only; paste a key here to use your own and get free images)'}</span>
           </div>
         )}
         <div className="flex gap-2 mt-4">

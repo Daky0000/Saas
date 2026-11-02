@@ -200,3 +200,20 @@ test('callAINonStreaming: answers from NVIDIA when it works; free-only key fails
     nv.invalidateNvidiaConfig();
   }
 });
+
+test('nvidia via Dakyworld OS: with no key here, chat goes to the OS proxy with the partner key; images refuse', async () => {
+  const proxy = nv.osNvidiaProxy({ DAKYX_BASE_URL: 'https://os.example.com/', DAKYX_PARTNER_KEY: 'pk_test' } as any);
+  assert.deepEqual(proxy, { base: 'https://os.example.com/api/partner/v1/nvidia', key: 'pk_test' });
+  assert.equal(nv.osNvidiaProxy({ DAKYX_BASE_URL: 'https://os.example.com' } as any), null);
+
+  const seen: Array<{ url: string; auth: string }> = [];
+  const fetchImpl = (async (url: string, init: any) => {
+    seen.push({ url, auth: init.headers.authorization });
+    return json(200, { choices: [{ message: { content: 'via OS' } }] });
+  }) as any;
+  const cfg = config({ apiKey: 'pk_test', source: 'os', chatBase: proxy!.base });
+  const r = await nv.nvidiaChat({ system: 's', user: 'u', maxTokens: 100, job: 'text', config: cfg, fetchImpl });
+  assert.equal(r.text, 'via OS');
+  assert.deepEqual(seen, [{ url: 'https://os.example.com/api/partner/v1/nvidia/chat/completions', auth: 'Bearer pk_test' }]);
+  await assert.rejects(nv.nvidiaImage({ prompt: 'x', config: cfg, fetchImpl }), /Dakyworld OS only shares the chat models/);
+});
