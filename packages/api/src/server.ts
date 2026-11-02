@@ -118,6 +118,10 @@ import { registerSocialRoutes } from './server/socialRoutes.ts';
 import { buildMediaModule } from './server/mediaRoutes.ts';
 import { registerMediaStoreRoutes } from './server/mediaStore.ts';
 import { registerNvidiaRoutes } from './server/nvidiaRoutes.ts';
+import { registerAIOpsRoutes } from './server/aiOpsRoutes.ts';
+import { runAIMonitor } from './server/aiTrace.ts';
+import { pruneCheckpoints } from './server/aiCheckpoints.ts';
+import { pruneAIResponseCache } from './ai-helpers.ts';
 import { registerCardTemplateRoutes } from './server/cardRoutes.ts';
 import { registerPricingRoutes } from './server/pricingRoutes.ts';
 import { registerWordPressRoutes } from './server/wordpressRoutes.ts';
@@ -1025,6 +1029,7 @@ app.use('/api/admin/higgsfield', registerHiggsfieldRoutes({ requireAdmin, hasDat
 // ─── Magnific AI Routes ─────────────────────────────────────────────────────────
 app.use('/api', registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase, pool }));
 app.use('/api', registerNvidiaRoutes({ requireAdmin, hasDatabase, pool }));
+app.use('/api', registerAIOpsRoutes({ requireAdmin, hasDatabase, inMemoryPlatformConfigs }));
 
 // ── Nova Design Agent Routes ───────────────────────────────────────────────────
 const { router: novaRouter, runScheduledAgents, runAgentForUser } = buildNovaModule({ requireAuth, requireAdmin, hasDatabase, dbQuery, pool, getAIConfig, resolveActiveKey, decryptAIKey, AGENT_DEFS });
@@ -1210,6 +1215,16 @@ if (config.nodeEnv !== 'test') {
     // 72 minutes) runs close to its slot. Ticks never overlap.
     void contentPlanEngine.processDueContentPlans();
     setInterval(() => void contentPlanEngine.processDueContentPlans(), 2 * 60 * 1000);
+    // AI monitoring: error-rate, latency and spend alerts from the call traces;
+    // plus housekeeping for the response cache, checkpoints and old traces.
+    setInterval(() => void runAIMonitor().catch((err) => logger.warn({ err }, 'ai_monitor_failed')), 5 * 60 * 1000);
+    const aiHousekeeping = () => {
+      void pruneAIResponseCache();
+      void pruneCheckpoints(14);
+      void dbQuery(`DELETE FROM ai_call_traces WHERE created_at < NOW() - INTERVAL '90 days'`).catch(() => undefined);
+    };
+    aiHousekeeping();
+    setInterval(aiHousekeeping, 6 * 60 * 60 * 1000);
 
     // ── AI Sales OS ──
     // Analyse finished conversations every minute — a rep who just logged a

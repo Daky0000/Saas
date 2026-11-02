@@ -1,5 +1,6 @@
 import { getPlatformConfig } from '../user-auth.ts';
 import { logger } from '../logger.ts';
+import { capToolResult } from './aiGuard.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Free NVIDIA models — the same catalogue, ladders and wire rules as Dakyworld
@@ -329,7 +330,8 @@ export async function nvidiaAgentLoop(params: {
         try {
           const result = await params.executeTool(name, args);
           params.onToolDone?.(name, true, result);
-          content = JSON.stringify(result);
+          // Capped: every later turn re-sends it.
+          content = capToolResult(result);
         } catch (err: any) {
           const message = err?.message || 'Tool failed';
           params.onToolDone?.(name, false, message);

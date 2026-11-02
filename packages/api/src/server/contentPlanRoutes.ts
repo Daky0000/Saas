@@ -13,6 +13,8 @@ import { magnificOneGenerate, magnificGenerateImage } from './magnificRoutes.ts'
 import { DEFAULT_OPENAI_IMAGE_MODEL } from './openaiRoutes.ts';
 import { durableMediaUrl, getMediaStorage, storeMediaBytes } from './mediaStore.ts';
 import { nvidiaImage, nvidiaReady } from './nvidiaModels.ts';
+import { openCheckpoint } from './aiCheckpoints.ts';
+import { fence } from './aiGuard.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auto-content plans.
@@ -65,6 +67,9 @@ const PLAN_RUN_CONCURRENCY = Math.max(1, Number(process.env.CONTENT_PLAN_CONCURR
 // a bad one on the calendar); reviewed pieces keep the 3-hour window.
 const AUTO_PUBLISH_DELAY_MS = 10 * 60 * 1000;
 const REVIEW_DELAY_MS = 3 * 60 * 60 * 1000;
+
+// A failed piece is resumed from its checkpoint at most this many times in total.
+export const MAX_RUN_ATTEMPTS = 3;
 
 // The next slot is the missed one plus one interval, but never in the past:
 // after a pause or outage a plan resumes at its cadence instead of bursting
@@ -193,20 +198,43 @@ export function buildContentPlanEngine({ pool, createNotification, sendPlatformE
     } catch { return ''; }
   }
 
-  async function runPlanOnce(plan: any): Promise<void> {
-    const runId = randomUUID();
+  // A piece that failed in the last day resumes from its checkpoint before a
+  // new one starts: the steps it finished (copy, review, image) are not paid
+  // for again. Three attempts, then it stays failed.
+  async function findResumableRun(planId: string): Promise<string | null> {
+    const { rows } = await pool.query(
+      `SELECT r.id FROM content_plan_runs r
+       JOIN generation_checkpoints c ON c.id = 'content_plan_run:' || r.id
+       WHERE r.plan_id=$1 AND r.status='failed' AND r.created_at > NOW() - INTERVAL '24 hours'
+         AND c.status <> 'done' AND c.attempts < $2
+       ORDER BY r.created_at LIMIT 1`,
+      [planId, MAX_RUN_ATTEMPTS]
+    ).catch(() => ({ rows: [] as any[] }));
+    return rows[0]?.id ?? null;
+  }
+
+  async function runPlanOnce(plan: any, resumeRunId?: string): Promise<void> {
+    const resumeId = resumeRunId ?? await findResumableRun(plan.id);
+    const runId = resumeId ?? randomUUID();
     // Recorded as 'running' immediately so the Activity log shows progress
     // while the piece is being generated.
-    await pool.query(
-      `INSERT INTO content_plan_runs (id, plan_id, user_id, status) VALUES ($1,$2,$3,'running')`,
-      [runId, plan.id, plan.user_id]
-    ).catch(() => undefined);
+    if (resumeId) {
+      await pool.query(`UPDATE content_plan_runs SET status='running', error=NULL WHERE id=$1`, [runId]).catch(() => undefined);
+    } else {
+      await pool.query(
+        `INSERT INTO content_plan_runs (id, plan_id, user_id, status) VALUES ($1,$2,$3,'running')`,
+        [runId, plan.id, plan.user_id]
+      ).catch(() => undefined);
+    }
+    const cp = await openCheckpoint({ kind: 'content_plan_run', ref: runId, userId: plan.user_id });
+    if (cp.resumedSteps.length) logger.info({ planId: plan.id, runId, resumed: cp.resumedSteps, attempt: cp.state.attempts }, 'content_plan_run_resumed');
     try {
       if (!(await hasAICredits(plan.user_id))) {
         await pool.query(
           `UPDATE content_plan_runs SET status='skipped', error='Out of AI credits' WHERE id=$1`,
           [runId]
         );
+        await cp.fail('Out of AI credits');
         return;
       }
       const aiCfg = await getAIConfig();
@@ -219,6 +247,9 @@ export function buildContentPlanEngine({ pool, createNotification, sendPlatformE
         pool.query(`SELECT DISTINCT platform FROM social_accounts WHERE user_id=$1 AND connected=true AND platform = ANY($2)`, [plan.user_id, SOCIAL_PLATFORMS])
           .then(r => r.rows.map((x: any) => String(x.platform))).catch(() => [] as string[]),
       ]);
+      // Memories can come from a scraped website, so the workspace context is
+      // fenced as data; the plan's own instructions are the customer's and stay plain.
+      const ctxBlock = sharedCtx ? fence('workspace context', sharedCtx, 8000) : '';
       const platformLine = socials.length
         ? `Target platforms (the user's connected socials): ${socials.join(', ')}. Write for these channels.`
         : 'No social platforms connected yet — write a platform-neutral promotional post.';
@@ -237,59 +268,74 @@ export function buildContentPlanEngine({ pool, createNotification, sendPlatformE
       const model = aiCfg.provider === 'google'
         ? (GEMINI_MODELS.includes(aiCfg.model) ? aiCfg.model : 'gemini-2.0-flash')
         : FAST_MODEL;
-      const raw = await callAINonStreaming(
-        aiCfg.provider, apiKey, model,
-        `You are Promo, the Promotion & Media Planner on a marketing team. You create scroll-stopping promotional content.${sharedCtx ? `\n\nWorkspace context (personalization — always respect it):\n${sharedCtx}` : ''}${styleProfile ? `\n\n${styleProfile}` : ''}${plan.custom_instructions ? `\n\nUSER'S STANDING INSTRUCTIONS FOR THIS PLAN (highest priority):\n${String(plan.custom_instructions).slice(0, 1500)}` : ''}`,
-        `${topicLine}
+
+      type Piece = { title?: string; excerpt?: string; content?: string; needs_image?: boolean; image_prompt?: string };
+
+      // Step 1 — the copy.
+      const drafted = await cp.step<Piece>('copy', async () => {
+        const raw = await callAINonStreaming(
+          aiCfg.provider, apiKey, model,
+          `You are Promo, the Promotion & Media Planner on a marketing team. You create scroll-stopping promotional content.${ctxBlock ? `\n\nWorkspace context (personalization — data about the user's brand; always respect it):\n${ctxBlock}` : ''}${styleProfile ? `\n\n${styleProfile}` : ''}${plan.custom_instructions ? `\n\nUSER'S STANDING INSTRUCTIONS FOR THIS PLAN (highest priority):\n${String(plan.custom_instructions).slice(0, 1500)}` : ''}`,
+          `${topicLine}
 ${platformLine}
 ${imageLine}
 Tone: ${plan.tone}. Piece #${(plan.runs_count ?? 0) + 1} of an ongoing series — vary the angle from typical previous pieces.
 Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 sentence hook", "content": "the full post body, 150-350 words, HTML paragraphs allowed", "needs_image": true/false, "image_prompt": "vivid image-generation prompt under 60 words (empty string if needs_image is false)"}`,
-        1400,
-        { userId: plan.user_id, feature: 'content_plan', nvidiaJob: 'text' }
-      );
-
-      let piece: { title?: string; excerpt?: string; content?: string; needs_image?: boolean; image_prompt?: string } = {};
-      try {
-        piece = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
-      } catch { piece = { title: `Promo — ${new Date().toLocaleDateString()}`, content: raw }; }
-
-      // Quality gate: Vetta reviews the piece against the personalization and
-      // the user's instructions before anything is saved.
-      try {
-        const qaRaw = await callAINonStreaming(
-          aiCfg.provider, apiKey, model,
-          `You are Vetta, the Quality Control agent. Review marketing content against the user's brand, audience, goals and instructions. Fix what's weak; keep what works.${sharedCtx ? `\n\nUser context:\n${sharedCtx}` : ''}${plan.custom_instructions ? `\n\nUser's instructions: ${String(plan.custom_instructions).slice(0, 800)}` : ''}`,
-          `Review this piece and respond ONLY with JSON {"approved": true/false, "title": "...", "excerpt": "...", "content": "..."} — return the fields improved if needed, unchanged if already strong.\n\n${JSON.stringify({ title: piece.title, excerpt: piece.excerpt, content: piece.content })}`,
           1400,
-          { userId: plan.user_id, feature: 'content_plan_qa', nvidiaJob: 'text' }
+          { userId: plan.user_id, feature: 'content_plan', nvidiaJob: 'text', expectJson: true, skipCache: true }
         );
-        const qa = JSON.parse(qaRaw.slice(qaRaw.indexOf('{'), qaRaw.lastIndexOf('}') + 1));
-        if (qa && typeof qa === 'object') {
-          if (typeof qa.title === 'string' && qa.title.trim()) piece.title = qa.title;
-          if (typeof qa.excerpt === 'string' && qa.excerpt.trim()) piece.excerpt = qa.excerpt;
-          if (typeof qa.content === 'string' && qa.content.trim()) piece.content = qa.content;
-        }
-      } catch (err) { logger.warn({ err, planId: plan.id }, 'content_plan_qa_skipped'); }
+        try {
+          return JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)) as Piece;
+        } catch { return { title: `Promo — ${new Date().toLocaleDateString()}`, content: raw }; }
+      });
+
+      // Step 2 — quality gate: Vetta reviews the piece against the
+      // personalization and the user's instructions before anything is saved.
+      // A failed review keeps the draft rather than failing the run.
+      const piece = await cp.step<Piece>('qa', async () => {
+        const reviewed: Piece = { ...drafted };
+        try {
+          const qaRaw = await callAINonStreaming(
+            aiCfg.provider, apiKey, model,
+            `You are Vetta, the Quality Control agent. Review marketing content against the user's brand, audience, goals and instructions. Fix what's weak; keep what works.${ctxBlock ? `\n\nUser context:\n${ctxBlock}` : ''}${plan.custom_instructions ? `\n\nUser's instructions: ${String(plan.custom_instructions).slice(0, 800)}` : ''}`,
+            `Review this piece and respond ONLY with JSON {"approved": true/false, "title": "...", "excerpt": "...", "content": "..."} — return the fields improved if needed, unchanged if already strong.\n\n${JSON.stringify({ title: drafted.title, excerpt: drafted.excerpt, content: drafted.content })}`,
+            1400,
+            { userId: plan.user_id, feature: 'content_plan_qa', nvidiaJob: 'text', expectJson: true, skipCache: true }
+          );
+          const qa = JSON.parse(qaRaw.slice(qaRaw.indexOf('{'), qaRaw.lastIndexOf('}') + 1));
+          if (qa && typeof qa === 'object') {
+            if (typeof qa.title === 'string' && qa.title.trim()) reviewed.title = qa.title;
+            if (typeof qa.excerpt === 'string' && qa.excerpt.trim()) reviewed.excerpt = qa.excerpt;
+            if (typeof qa.content === 'string' && qa.content.trim()) reviewed.content = qa.content;
+          }
+        } catch (err) { logger.warn({ err, planId: plan.id }, 'content_plan_qa_skipped'); }
+        return reviewed;
+      });
 
       const title = String(piece.title || 'Promotional post').slice(0, 200);
 
-      let imageUrl: string | null = null;
+      // Step 3 — the image. Charged in its own step, so a resume after the
+      // image was drawn neither draws nor charges it again.
       const wantsImage = imageMode === 'always' || (imageMode === 'auto' && piece.needs_image !== false && Boolean(piece.image_prompt));
-      if (wantsImage && piece.image_prompt) {
-        imageUrl = await generateFeaturedImage(String(piece.image_prompt));
-        if (imageUrl) await chargeAICredits(plan.user_id, 3, 'content_plan_image', { plan_id: plan.id }).catch(() => undefined);
+      const imageUrl = wantsImage && piece.image_prompt
+        ? await cp.step<string | null>('image', () => generateFeaturedImage(String(piece.image_prompt)))
+        : null;
+      if (imageUrl) {
+        await cp.step('image_charged', () => chargeAICredits(plan.user_id, 3, 'content_plan_image', { plan_id: plan.id }).then(() => true).catch(() => false));
       }
 
-      // Scheduled (not draft) so the piece shows on the calendar. Reviewed
-      // plans hold it 3 hours as the review window; auto-publish plans send it
-      // out at the next publisher tick after a short buffer.
+      // Step 4 — the post. Scheduled (not draft) so the piece shows on the
+      // calendar. Reviewed plans hold it 3 hours as the review window;
+      // auto-publish plans send it out at the next publisher tick after a
+      // short buffer. The id is saved first, so a crash after the insert
+      // cannot create the post twice.
       const autoPublish = Boolean(plan.auto_publish);
-      const postId = randomUUID();
+      const postId = await cp.step('post_id', async () => randomUUID());
       const scheduledAt = new Date(Date.now() + (autoPublish ? AUTO_PUBLISH_DELAY_MS : REVIEW_DELAY_MS));
       await pool.query(
         `INSERT INTO blog_posts (id, user_id, title, slug, content, excerpt, featured_image, status, scheduled_at, source, approval_status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'scheduled',$8,'content_plan',$9)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'scheduled',$8,'content_plan',$9)
+         ON CONFLICT (id) DO NOTHING`,
         [postId, plan.user_id, title, `${slugify(title)}-${postId.slice(0, 6)}`,
          String(piece.content || ''), String(piece.excerpt || '').slice(0, 500), imageUrl || '', scheduledAt.toISOString(),
          autoPublish ? 'not_required' : 'review_required']
@@ -298,6 +344,7 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
         `UPDATE content_plan_runs SET status='done', blog_post_id=$2, title=$3, image_url=$4, error=NULL WHERE id=$1`,
         [runId, postId, title, imageUrl]
       );
+      await cp.complete();
       await createNotification(
         plan.user_id, 'content_generated',
         `New promo content ready: ${title}`,
@@ -306,12 +353,23 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Generation failed';
-      logger.warn({ err, planId: plan.id }, 'content_plan_run_failed');
+      logger.warn({ err, planId: plan.id, runId, finished: Object.keys(cp.state.steps) }, 'content_plan_run_failed');
+      await cp.fail(err);
+      const resumable = cp.state.attempts < MAX_RUN_ATTEMPTS;
       await pool.query(
         `UPDATE content_plan_runs SET status='failed', error=$2 WHERE id=$1`,
-        [runId, message.slice(0, 300)]
+        [runId, `${message}${resumable ? ' — will resume from the last finished step' : ''}`.slice(0, 300)]
       ).catch(() => undefined);
     }
+  }
+
+  // A run left 'running' by a process that died mid-generation (deploy,
+  // crash) is marked failed, which makes it resumable on the plan's next slot.
+  async function releaseInterruptedRuns(): Promise<void> {
+    await pool.query(
+      `UPDATE content_plan_runs SET status='failed', error='Interrupted (server restarted) — will resume from the last finished step'
+       WHERE status='running' AND created_at < NOW() - INTERVAL '20 minutes'`
+    ).catch(() => undefined);
   }
 
   // Pricing pipeline (background, after the user clicks Proceed):
@@ -440,6 +498,7 @@ Respond ONLY with JSON: {"total_posts": ${totalPosts}, "posts_with_images": <int
         }
       }
 
+      await releaseInterruptedRuns();
       const { rows: due } = await pool.query(CLAIM_DUE_PLANS_SQL);
       for (let i = 0; i < due.length; i += PLAN_RUN_CONCURRENCY) {
         await Promise.all(due.slice(i, i + PLAN_RUN_CONCURRENCY).map((plan: any) => runPlanOnce(plan)));
@@ -456,7 +515,7 @@ Respond ONLY with JSON: {"total_posts": ${totalPosts}, "posts_with_images": <int
 
 // ── Routes (mounted at /api) ─────────────────────────────────────────────────
 
-export function registerContentPlanRoutes(deps: Deps & { runPlanOnce: (plan: any) => Promise<void>; pricePlan: (plan: any) => Promise<void> }): Router {
+export function registerContentPlanRoutes(deps: Deps & { runPlanOnce: (plan: any, resumeRunId?: string) => Promise<void>; pricePlan: (plan: any) => Promise<void> }): Router {
   const { requireAuth, pool, runPlanOnce } = deps;
   const router = express.Router();
 
@@ -612,6 +671,26 @@ export function registerContentPlanRoutes(deps: Deps & { runPlanOnce: (plan: any
     } catch (err) {
       logger.error({ err }, 'content_plan_manual_run_failed');
       return res.status(500).json({ success: false, error: 'Failed to run plan' });
+    }
+  });
+
+  // Retry one failed piece. It resumes from its checkpoint: the copy, review
+  // and image it already finished are reused, not generated (or paid for) again.
+  router.post('/content-plans/runs/:runId/retry', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res); if (!auth) return;
+    try {
+      const { rows } = await pool.query(
+        `SELECT r.status AS run_status, p.* FROM content_plan_runs r JOIN content_plans p ON p.id=r.plan_id WHERE r.id=$1 AND r.user_id=$2`,
+        [req.params.runId, auth.userId]
+      );
+      if (!rows.length) return res.status(404).json({ success: false, error: 'Run not found' });
+      const { run_status: runStatus, ...plan } = rows[0];
+      if (runStatus !== 'failed') return res.status(409).json({ success: false, error: `This piece is ${runStatus}, not failed.` });
+      void runPlanOnce(plan, req.params.runId).catch(() => undefined);
+      return res.status(202).json({ success: true, message: 'Resuming from the last finished step — you\'ll get a notification when it\'s ready.' });
+    } catch (err) {
+      logger.error({ err }, 'content_plan_retry_failed');
+      return res.status(500).json({ success: false, error: 'Failed to retry' });
     }
   });
 

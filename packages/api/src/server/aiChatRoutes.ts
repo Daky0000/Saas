@@ -1,11 +1,15 @@
 import express from 'express';
 import type { Router, Response } from 'express';
 import type { Request } from '../types/http.ts';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger } from '../logger.ts';
-import { resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits, recordFastPathSavings, chargeAICredits, resolveTextKey, isPaidKey } from '../ai-helpers.ts';
+import { resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits, recordFastPathSavings, chargeAICredits, resolveTextKey, isPaidKey, computeAICostUsd } from '../ai-helpers.ts';
+import { DEFAULT_TOOL_RULES, ToolGuard, UNTRUSTED_RULE, canaryLine, capToolResult, checkOutput, fence, mergeScans, scanForInjection } from './aiGuard.ts';
+import { chatTurnKey, makeToolMemo } from './aiCheckpoints.ts';
+import { classifyChatTurn, fitHistory, routePaidModel, routingMode } from './aiRouting.ts';
+import { startSpan } from './aiTrace.ts';
 import { nvidiaAgentLoop, nvidiaChat } from './nvidiaModels.ts';
 import { buildSharedAgentContext, recordAgentInsight } from './agentSharedContext.ts';
 import { aiChatLimiter } from '../middleware/rateLimiter.ts';
@@ -53,6 +57,12 @@ interface AIChatDeps {
 }
 
 // ── Local constants ───────────────────────────────────────────────────────────
+
+// Planted at the very top of the chat system prompt. It is stable per
+// deployment (so the prompt stays cacheable) and secret (derived from the
+// JWT secret), so if it ever appears in a reply the prompt is leaking and the
+// reply is cut off before the rest of the prompt streams out.
+const CHAT_CANARY = `cnry-${createHash('sha256').update(`${process.env.JWT_SECRET ?? 'dev'}:chat-canary`).digest('hex').slice(0, 12)}`;
 
 const AI_CORE_RULES = `
 ---
@@ -1178,7 +1188,7 @@ export function registerAIChatRoutes({
             const sections = Object.entries(grouped)
               .map(([cat, lines]) => `### ${cat}\n${lines.join('\n')}`)
               .join('\n\n');
-            userMemoryBlock = `## ABOUT THIS USER\n${sections}`;
+            userMemoryBlock = `## ABOUT THIS USER\n${fence('user memories', sections, 12_000)}`;
           } else {
             userMemoryBlock = '## ABOUT THIS USER\nNo personalization data yet. Ask one focused question to understand their brand before drafting.';
           }
@@ -1187,17 +1197,60 @@ export function registerAIChatRoutes({
 
       const saasContext = await getUserSaaSContext(auth.userId);
 
+      // Guardrails for this turn. Memories (some come from a scraped website)
+      // and workspace records are fenced as data. If they, or what the user
+      // just pasted, look like an injection attempt, the turn is tainted: it
+      // can still read and draft, but tools that publish or spend are refused.
+      const recentUserTurns = messages.filter((m) => m.role === 'user').slice(-2).map((m) => String(m.content || ''));
+      const scan = mergeScans(scanForInjection(userMemoryBlock), scanForInjection(saasContext), ...recentUserTurns.map(scanForInjection));
+      const toolGuard = new ToolGuard({ tainted: scan.suspicious });
+      if (scan.suspicious) logger.warn({ userId: auth.userId, signals: scan.signals.map((s) => s.id) }, 'chat_turn_tainted');
+      // A retried turn (same conversation) replays side-effecting tool results
+      // instead of creating a second draft, post or video.
+      const memoTool = makeToolMemo({ userId: auth.userId, turnKey: chatTurnKey(auth.userId, messages) });
+      const runTool = async (name: string, args: any) => {
+        const decision = toolGuard.check(name, args);
+        if (!decision.allow) throw new Error(decision.reason);
+        if ((DEFAULT_TOOL_RULES[name]?.risk ?? 'external') === 'read') return executeAITool(name, args, auth.userId);
+        return memoTool(name, args, () => executeAITool(name, args, auth.userId));
+      };
+
       const stablePrompt = [
+        canaryLine(CHAT_CANARY),
         (aiCfg.systemPrompt || AI_SYSTEM_PROMPT_DEFAULT).replace('{USER_MEMORY}', '(See the ABOUT THIS USER section at the end of this prompt.)'),
         AI_CORE_RULES,
+        UNTRUSTED_RULE,
       ].join('\n\n');
-      let dynamicPrompt = [userMemoryBlock, saasContext, skillsPrompt].filter(Boolean).join('\n\n');
+      let dynamicPrompt = [userMemoryBlock, saasContext ? fence('workspace data', saasContext, 8000) : '', skillsPrompt].filter(Boolean).join('\n\n');
+      const history = fitHistory(messages.slice(-16).map((m) => ({ role: m.role === 'assistant' ? 'assistant' as const : 'user' as const, content: String(m.content || '') })));
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
 
       const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+      // Streamed text is checked as it accumulates: once the canary from the
+      // top of the system prompt appears, the reply is cut off there.
+      let streamed = '';
+      let leaked = false;
+      const sendText = (text: string) => {
+        if (leaked) return;
+        streamed += text;
+        if (streamed.includes(CHAT_CANARY) || streamed.includes(CHAT_CANARY.slice(0, 9))) {
+          leaked = true;
+          send({ type: 'text', text: '\n\nI can\'t share my internal instructions. Ask me about your content, posts or campaigns instead.' });
+          return;
+        }
+        send({ type: 'text', text });
+      };
+      const span = startSpan({ feature: 'chat', userId: auth.userId });
+      const guardInfo = () => ({
+        ...(scan.suspicious ? { suspicious: true, signals: scan.signals.map((s) => s.id) } : {}),
+        ...(toolGuard.denied.length ? { deniedTools: toolGuard.denied } : {}),
+        ...(leaked ? { outputIssues: ['system_prompt_leak'] } : {}),
+      });
+      const guardOrNull = () => { const g = guardInfo(); return Object.keys(g).length ? g : null; };
+      let freeAttempts: Array<{ model: string; error: string }> = [];
 
       // ── Free first: the NVIDIA agent ladder (three models, one try each) ────
       // with the same tools. Only if all three fail does the paid model below
@@ -1205,21 +1258,24 @@ export function registerAIChatRoutes({
       if (aiCfg.nvidiaReady) {
         const free = await nvidiaAgentLoop({
           system: `${stablePrompt}\n\n${dynamicPrompt}`,
-          history: messages.slice(-16).map((m) => ({ role: m.role === 'assistant' ? 'assistant' as const : 'user' as const, content: String(m.content || '').slice(0, 3500) })),
+          history,
           tools: AI_TOOLS as any,
-          executeTool: (name, args) => executeAITool(name, args, auth.userId),
-          onText: (text) => send({ type: 'text', text }),
+          executeTool: runTool,
+          onText: (text) => sendText(checkOutput(text, { canary: CHAT_CANARY }).text),
           onToolStart: (name, args) => send({ type: 'tool_start', name, label: aiToolLabel(name, args) }),
           onToolDone: (name, ok, result) => send(ok ? { type: 'tool_done', name, success: true, result } : { type: 'tool_done', name, success: false, error: String(result) }),
         });
+        freeAttempts = free.attempts;
         if (free.ok) {
           void recordAIUsage({ userId: auth.userId, feature: 'chat', provider: 'nvidia', model: free.model, inputTokens: free.inputTokens, outputTokens: free.outputTokens });
+          span.end({ status: 'ok', provider: 'nvidia', model: free.model, inputTokens: free.inputTokens, outputTokens: free.outputTokens, attempts: free.attempts, guard: guardOrNull() });
           res.write('data: [DONE]\n\n');
           res.end();
           return;
         }
         logger.warn({ attempts: free.attempts, userId: auth.userId }, 'chat_free_models_failed');
         if (!apiKey) {
+          span.end({ status: 'error', provider: 'nvidia', model: 'ladder', attempts: free.attempts, guard: guardOrNull(), error: free.error });
           send({ type: 'text', text: `\n\nThe free AI models are not answering right now and no paid AI key is configured. (${free.error})` });
           res.write('data: [DONE]\n\n');
           res.end();
@@ -1228,9 +1284,12 @@ export function registerAIChatRoutes({
         if (free.brief) dynamicPrompt = [dynamicPrompt, free.brief].filter(Boolean).join('\n\n');
       }
 
+      // Most turns do not need the most expensive model; long or strategic ones do.
+      const route = routePaidModel(aiCfg.provider, aiCfg.provider === 'google' ? resolveGeminiModel(aiCfg.model) : aiCfg.model, classifyChatTurn(history), await routingMode());
+
       // ── Google Gemini path — streaming + function calling ───────────────────
       if (aiCfg.provider === 'google') {
-        const effectiveModel = resolveGeminiModel(aiCfg.model);
+        const effectiveModel = route.model;
         const genAI = new GoogleGenerativeAI(apiKey);
         const geminiTools = [{
           functionDeclarations: AI_TOOLS.map((t: any) => ({
@@ -1245,37 +1304,44 @@ export function registerAIChatRoutes({
           tools: geminiTools as any,
         });
 
-        const allMessages = messages.slice(-16).map((m) => ({
+        const allMessages = history.map((m) => ({
           role: m.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: String(m.content || '').slice(0, 3500) }],
+          parts: [{ text: m.content }],
         }));
-        const history = allMessages.slice(0, -1);
+        const geminiHistory = allMessages.slice(0, -1);
         const lastPart = allMessages[allMessages.length - 1]?.parts[0]?.text ?? '';
 
-        const chat = gModel.startChat({ history });
-        const stream = await chat.sendMessageStream(lastPart);
-        for await (const chunk of stream.stream) {
-          const text = chunk.text();
-          if (text) send({ type: 'text', text });
-        }
-        const agg = await stream.response;
-        const fnCalls = typeof (agg as any).functionCalls === 'function' ? (agg as any).functionCalls() : [];
-        if (Array.isArray(fnCalls) && fnCalls.length > 0) {
-          for (const fc of fnCalls) {
-            send({ type: 'tool_start', name: fc.name, label: aiToolLabel(fc.name, fc.args) });
-            try {
-              const result = await executeAITool(fc.name, fc.args, auth.userId);
-              send({ type: 'tool_done', name: fc.name, success: true, result });
-            } catch (err: any) {
-              send({ type: 'tool_done', name: fc.name, success: false, error: err?.message || 'Tool failed' });
+        try {
+          const chat = gModel.startChat({ history: geminiHistory });
+          const stream = await chat.sendMessageStream(lastPart);
+          for await (const chunk of stream.stream) {
+            const text = chunk.text();
+            if (text) sendText(text);
+          }
+          const agg = await stream.response;
+          const fnCalls = typeof (agg as any).functionCalls === 'function' ? (agg as any).functionCalls() : [];
+          if (Array.isArray(fnCalls) && fnCalls.length > 0 && !leaked) {
+            for (const fc of fnCalls) {
+              send({ type: 'tool_start', name: fc.name, label: aiToolLabel(fc.name, fc.args) });
+              try {
+                const result = await runTool(fc.name, fc.args);
+                send({ type: 'tool_done', name: fc.name, success: true, result });
+              } catch (err: any) {
+                send({ type: 'tool_done', name: fc.name, success: false, error: err?.message || 'Tool failed' });
+              }
             }
           }
+          const inTok = agg.usageMetadata?.promptTokenCount ?? 0;
+          const outTok = agg.usageMetadata?.candidatesTokenCount ?? 0;
+          void recordAIUsage({ userId: auth.userId, feature: 'chat', provider: 'google', model: effectiveModel, inputTokens: inTok, outputTokens: outTok });
+          span.end({
+            status: 'ok', provider: 'google', model: effectiveModel, inputTokens: inTok, outputTokens: outTok,
+            costUsd: computeAICostUsd(effectiveModel, inTok, outTok), routedFrom: route.routedFrom, attempts: freeAttempts, guard: guardOrNull(),
+          });
+        } catch (err: any) {
+          span.end({ status: 'error', provider: 'google', model: effectiveModel, routedFrom: route.routedFrom, attempts: freeAttempts, guard: guardOrNull(), error: err?.message || String(err) });
+          throw err;
         }
-        void recordAIUsage({
-          userId: auth.userId, feature: 'chat', provider: 'google', model: effectiveModel,
-          inputTokens: agg.usageMetadata?.promptTokenCount ?? 0,
-          outputTokens: agg.usageMetadata?.candidatesTokenCount ?? 0,
-        });
         res.write('data: [DONE]\n\n');
         res.end();
         return;
@@ -1283,68 +1349,77 @@ export function registerAIChatRoutes({
 
       // ── Anthropic path — streaming agentic loop with tools ──────────────────
       const client = new Anthropic({ apiKey });
+      const paidModel = route.model;
 
       const systemBlocks: Anthropic.TextBlockParam[] = [
         { type: 'text', text: stablePrompt, cache_control: { type: 'ephemeral' } },
         ...(dynamicPrompt ? [{ type: 'text' as const, text: dynamicPrompt }] : []),
       ];
 
-      const conversationMessages: Anthropic.MessageParam[] = messages.slice(-16).map((m) => ({
-        role: m.role as 'user' | 'assistant',
-        content: String(m.content || '').slice(0, 3500),
-      }));
-
-      let loopMessages = [...conversationMessages];
+      let loopMessages: Anthropic.MessageParam[] = history.map((m) => ({ role: m.role, content: m.content }));
       const usage = { input: 0, output: 0, cacheRead: 0 };
 
-      for (let iteration = 0; iteration < 5; iteration++) {
-        const isLastIteration = iteration >= 4;
+      try {
+        for (let iteration = 0; iteration < 5 && !leaked; iteration++) {
+          const isLastIteration = iteration >= 4;
 
-        const stream = client.messages.stream({
-          model: aiCfg.model,
-          max_tokens: 4096,
-          system: systemBlocks,
-          tools: AI_TOOLS,
-          ...(isLastIteration ? { tool_choice: { type: 'none' as const } } : {}),
-          messages: loopMessages,
-        });
-        for await (const chunk of stream) {
-          if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
-            send({ type: 'text', text: chunk.delta.text });
+          const stream = client.messages.stream({
+            model: paidModel,
+            max_tokens: 4096,
+            system: systemBlocks,
+            tools: AI_TOOLS,
+            ...(isLastIteration ? { tool_choice: { type: 'none' as const } } : {}),
+            messages: loopMessages,
+          });
+          for await (const chunk of stream) {
+            if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+              sendText(chunk.delta.text);
+              if (leaked) { stream.abort(); break; }
+            }
           }
-        }
-        const response = await stream.finalMessage();
-        usage.input += response.usage.input_tokens;
-        usage.output += response.usage.output_tokens;
-        usage.cacheRead += response.usage.cache_read_input_tokens ?? 0;
+          if (leaked) break;
+          const response = await stream.finalMessage();
+          usage.input += response.usage.input_tokens;
+          usage.output += response.usage.output_tokens;
+          usage.cacheRead += response.usage.cache_read_input_tokens ?? 0;
 
-        if (response.stop_reason !== 'tool_use' || isLastIteration) break;
+          if (response.stop_reason !== 'tool_use' || isLastIteration) break;
 
-        const toolResultContents: Anthropic.ToolResultBlockParam[] = [];
-        for (const block of response.content) {
-          if (block.type !== 'tool_use') continue;
-          send({ type: 'tool_start', name: block.name, label: aiToolLabel(block.name, block.input) });
-          try {
-            const result = await executeAITool(block.name, block.input, auth.userId);
-            send({ type: 'tool_done', name: block.name, success: true, result });
-            toolResultContents.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
-          } catch (err: any) {
-            const errMsg = err?.message || 'Tool failed';
-            send({ type: 'tool_done', name: block.name, success: false, error: errMsg });
-            toolResultContents.push({ type: 'tool_result', tool_use_id: block.id, content: `Error: ${errMsg}`, is_error: true });
+          const toolResultContents: Anthropic.ToolResultBlockParam[] = [];
+          for (const block of response.content) {
+            if (block.type !== 'tool_use') continue;
+            send({ type: 'tool_start', name: block.name, label: aiToolLabel(block.name, block.input) });
+            try {
+              const result = await runTool(block.name, block.input);
+              send({ type: 'tool_done', name: block.name, success: true, result });
+              toolResultContents.push({ type: 'tool_result', tool_use_id: block.id, content: capToolResult(result) });
+            } catch (err: any) {
+              const errMsg = err?.message || 'Tool failed';
+              send({ type: 'tool_done', name: block.name, success: false, error: errMsg });
+              toolResultContents.push({ type: 'tool_result', tool_use_id: block.id, content: `Error: ${errMsg}`, is_error: true });
+            }
           }
-        }
 
-        loopMessages = [
-          ...loopMessages,
-          { role: 'assistant', content: response.content },
-          { role: 'user', content: toolResultContents },
-        ];
+          loopMessages = [
+            ...loopMessages,
+            { role: 'assistant', content: response.content },
+            { role: 'user', content: toolResultContents },
+          ];
+        }
+      } catch (err: any) {
+        span.end({ status: 'error', provider: 'anthropic', model: paidModel, routedFrom: route.routedFrom, attempts: freeAttempts, guard: guardOrNull(), error: err?.message || String(err) });
+        throw err;
       }
 
       void recordAIUsage({
-        userId: auth.userId, feature: 'chat', provider: 'anthropic', model: aiCfg.model,
+        userId: auth.userId, feature: 'chat', provider: 'anthropic', model: paidModel,
         inputTokens: usage.input, outputTokens: usage.output, cacheReadTokens: usage.cacheRead,
+      });
+      span.end({
+        status: leaked ? 'blocked' : 'ok', provider: 'anthropic', model: paidModel,
+        inputTokens: usage.input, outputTokens: usage.output, cacheReadTokens: usage.cacheRead,
+        costUsd: computeAICostUsd(paidModel, usage.input, usage.output, usage.cacheRead),
+        routedFrom: route.routedFrom, attempts: freeAttempts, guard: guardOrNull(),
       });
 
       res.write('data: [DONE]\n\n');

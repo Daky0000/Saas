@@ -3,10 +3,13 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getPlatformConfig } from './user-auth.ts';
 import { decryptIntegrationSecret } from './integration-helpers.ts';
-import { pool, dbQuery } from './db.ts';
+import { pool, dbQuery, hasDatabase } from './db.ts';
 import { logger } from './logger.ts';
 import { randomUUID, createHash } from 'crypto';
-import { FREE_MODELS, getNvidiaConfig, jobForModel, nvidiaChat } from './server/nvidiaModels.ts';
+import { FREE_MODELS, NvidiaError, getNvidiaConfig, jobForModel, nvidiaChat } from './server/nvidiaModels.ts';
+import { UNTRUSTED_RULE, checkOutput, scanForInjection } from './server/aiGuard.ts';
+import { startSpan } from './server/aiTrace.ts';
+import { classifyTask, routePaidModel, routingMode } from './server/aiRouting.ts';
 
 export const AI_CONFIG_PLATFORM = 'ai_assistant';
 
@@ -94,18 +97,41 @@ export async function freeFirst(
   paid: (() => Promise<string>) | null,
 ): Promise<string> {
   const nvidia = await getNvidiaConfig().catch(() => null);
+  const system = withUntrustedRule(req.system, req.user);
+  let attempts: Array<{ model: string; error: string }> = [];
   if (nvidia?.enabled && nvidia.apiKey) {
+    const span = startSpan({ feature: req.feature, userId: req.userId });
     try {
-      const r = await nvidiaChat({ system: req.system, user: req.user, maxTokens: req.maxTokens, job: req.job ?? 'text', config: nvidia, accept: req.accept });
+      const r = await nvidiaChat({ system, user: req.user, maxTokens: req.maxTokens, job: req.job ?? 'text', config: nvidia, accept: req.accept });
       void recordAIUsage({ userId: req.userId, feature: req.feature, provider: 'nvidia', model: r.model, inputTokens: r.inputTokens, outputTokens: r.outputTokens });
-      return r.text;
+      const out = checkOutput(r.text);
+      span.end({ status: 'ok', provider: 'nvidia', model: r.model, inputTokens: r.inputTokens, outputTokens: r.outputTokens, attempts: r.attempts, guard: out.ok ? null : { outputIssues: out.issues } });
+      return out.text;
     } catch (err) {
+      attempts = err instanceof NvidiaError ? err.attempts : [];
+      span.end({ status: 'error', provider: 'nvidia', model: 'ladder', attempts, error: err instanceof Error ? err.message : String(err) });
       if (!paid) throw new Error(`${err instanceof Error ? err.message : 'Free NVIDIA models failed'} — and no paid AI key is set in Admin → AI Assistant to fall back to.`);
       logger.warn({ err: err instanceof Error ? err.message : err, feature: req.feature }, 'nvidia_free_failed_using_paid');
     }
   }
   if (!paid) throw new Error('No AI is configured — add the free NVIDIA key in Admin → NVIDIA, or a paid key in Admin → AI Assistant.');
-  return paid();
+  const span = startSpan({ feature: req.feature, userId: req.userId });
+  try {
+    const text = await paid();
+    const out = checkOutput(text);
+    // The agent's own call records its usage; this trace is for latency and failures.
+    span.end({ status: 'ok', provider: 'paid', model: 'agent-call', attempts, guard: out.ok ? null : { outputIssues: out.issues } });
+    return out.text;
+  } catch (err) {
+    span.end({ status: 'error', provider: 'paid', model: 'agent-call', attempts, error: err instanceof Error ? err.message : String(err) });
+    throw err;
+  }
+}
+
+/** Adds the untrusted-content rule to a system prompt whenever the call carries a fenced block. */
+export function withUntrustedRule(system: string, ...parts: string[]): string {
+  const fenced = [system, ...parts].some((p) => /<untrusted-[0-9a-f]{8}/.test(p));
+  return fenced && !system.includes(UNTRUSTED_RULE) ? `${system}\n\n${UNTRUSTED_RULE}` : system;
 }
 
 export function resolveTextKey(config: { provider: 'anthropic' | 'google'; encryptedKey: string | null; googleEncryptedKey: string | null; nvidiaReady?: boolean }): string {
@@ -263,6 +289,63 @@ export async function recordAIUsage(params: {
   }
 }
 
+export interface CallUsageMeta {
+  userId: string | null;
+  feature: string;
+  skipCache?: boolean;
+  cacheTtlMs?: number;
+  /** Which free NVIDIA ladder; defaults from the model tier. */
+  nvidiaJob?: 'text' | 'fast';
+  /** Already inside a free-first fallback: go straight to the paid vendor. */
+  skipFree?: boolean;
+  /** The answer must be a JSON object: a free rung that returns anything else counts as a failed try, and the trace records format_ok. */
+  expectJson?: boolean;
+  /** Keep the configured paid model for this call, whatever its size. */
+  noRouting?: boolean;
+}
+
+// Identical calls already in flight share one request instead of paying twice
+// (a double-clicked button, two tabs, a retry that overlaps the original).
+const inflight = new Map<string, Promise<string>>();
+
+export function looksLikeJsonObject(text: string): boolean {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start < 0 || end <= start) return false;
+  try { return typeof JSON.parse(text.slice(start, end + 1)) === 'object'; } catch { return false; }
+}
+
+async function readDurableCache(key: string): Promise<CachedAIResponse | null> {
+  if (!hasDatabase()) return null;
+  const { rows } = await dbQuery(
+    `SELECT text, model, tokens, expires_at FROM ai_response_cache WHERE key=$1 AND expires_at > NOW()`, [key],
+  ).catch(() => ({ rows: [] as any[] }));
+  const r = rows[0];
+  return r ? { text: String(r.text), model: String(r.model), estimatedTokens: Number(r.tokens) || 0, expiresAt: new Date(r.expires_at).getTime() } : null;
+}
+
+function writeCache(key: string, entry: CachedAIResponse): void {
+  aiResponseCache.set(key, entry);
+  if (aiResponseCache.size > 1500) {
+    const now = Date.now();
+    for (const [k, v] of aiResponseCache) if (v.expiresAt < now) aiResponseCache.delete(k);
+  }
+  // Survives a restart and is shared across instances; short TTLs are not worth the write.
+  if (hasDatabase() && entry.expiresAt - Date.now() >= 5 * 60 * 1000) {
+    void dbQuery(
+      `INSERT INTO ai_response_cache (key, text, model, tokens, expires_at) VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (key) DO UPDATE SET text=EXCLUDED.text, model=EXCLUDED.model, tokens=EXCLUDED.tokens, expires_at=EXCLUDED.expires_at`,
+      [key, entry.text, entry.model, entry.estimatedTokens, new Date(entry.expiresAt).toISOString()],
+    ).catch(() => undefined);
+  }
+}
+
+export async function pruneAIResponseCache(): Promise<void> {
+  const now = Date.now();
+  for (const [k, v] of aiResponseCache) if (v.expiresAt < now) aiResponseCache.delete(k);
+  if (hasDatabase()) await dbQuery(`DELETE FROM ai_response_cache WHERE expires_at < NOW()`).catch(() => undefined);
+}
+
 export async function callAINonStreaming(
   provider: 'anthropic' | 'google',
   apiKey: string,
@@ -270,42 +353,82 @@ export async function callAINonStreaming(
   systemPrompt: string,
   userMessage: string,
   maxTokens = 400,
-  usageMeta?: { userId: string | null; feature: string; skipCache?: boolean; cacheTtlMs?: number; /** Which free NVIDIA ladder; defaults from the model tier. */ nvidiaJob?: 'text' | 'fast'; /** Already inside a free-first fallback: go straight to the paid vendor. */ skipFree?: boolean },
+  usageMeta?: CallUsageMeta,
 ): Promise<string> {
   const cacheKey = createHash('sha256')
     .update(`${provider}:${model}:${maxTokens}:${systemPrompt}:${userMessage}`)
     .digest('hex');
+  const feature = usageMeta?.feature ?? 'unlabelled';
+  const userId = usageMeta?.userId ?? null;
 
   if (!usageMeta?.skipCache) {
-    const cached = aiResponseCache.get(cacheKey);
+    const cached = aiResponseCache.get(cacheKey) ?? await readDurableCache(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
+      aiResponseCache.set(cacheKey, cached);
       tokenEfficiencyStats.cacheHits += 1;
       tokenEfficiencyStats.estimatedTokensSaved += cached.estimatedTokens;
       const savedCost = computeAICostUsd(cached.model, cached.estimatedTokens, Math.round(cached.estimatedTokens * 0.3));
       tokenEfficiencyStats.estimatedUsdSaved += savedCost;
+      startSpan({ feature, userId }).end({ status: 'cache_hit', provider: 'cache', model: cached.model });
       return cached.text;
     }
+    const pending = inflight.get(cacheKey);
+    if (pending) return pending;
   }
+
+  const run = generateUncached(provider, apiKey, model, systemPrompt, userMessage, maxTokens, usageMeta, cacheKey);
+  if (usageMeta?.skipCache) return run;
+  inflight.set(cacheKey, run);
+  try { return await run; } finally { inflight.delete(cacheKey); }
+}
+
+async function generateUncached(
+  provider: 'anthropic' | 'google',
+  apiKey: string,
+  model: string,
+  rawSystemPrompt: string,
+  userMessage: string,
+  maxTokens: number,
+  usageMeta: CallUsageMeta | undefined,
+  cacheKey: string,
+): Promise<string> {
+  const feature = usageMeta?.feature ?? 'unlabelled';
+  const userId = usageMeta?.userId ?? null;
+  const ttl = usageMeta?.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
+  const systemPrompt = withUntrustedRule(rawSystemPrompt, userMessage);
+  // Signals only: a match is recorded on the trace, never refused here — the
+  // fence and the system rule do the defending.
+  const scan = scanForInjection(userMessage);
+  const inputGuard = scan.suspicious ? { suspicious: true, signals: scan.signals.map((s) => s.id) } : null;
+  const quality = (text: string) => (usageMeta?.expectJson ? { format_ok: looksLikeJsonObject(text), chars: text.length } : { chars: text.length });
+  const guardFor = (issues: string[]) => (inputGuard || issues.length ? { ...inputGuard, ...(issues.length ? { outputIssues: issues } : {}) } : null);
 
   tokenEfficiencyStats.totalCalls += 1;
 
   // Free first, as in Dakyworld OS: the job's ladder of free NVIDIA models,
   // then the paid vendor below only if every rung failed.
+  let attempts: Array<{ model: string; error: string }> = [];
   const nvidia = usageMeta?.skipFree ? null : await getNvidiaConfig().catch(() => null);
   if (nvidia?.enabled && nvidia.apiKey) {
+    const span = startSpan({ feature, userId });
     try {
-      const r = await nvidiaChat({ system: systemPrompt, user: userMessage, maxTokens, job: usageMeta?.nvidiaJob ?? jobForModel(model), config: nvidia });
-      if (usageMeta) {
-        void recordAIUsage({ ...usageMeta, provider: 'nvidia', model: r.model, inputTokens: r.inputTokens, outputTokens: r.outputTokens });
-      }
-      aiResponseCache.set(cacheKey, {
-        text: r.text,
-        expiresAt: Date.now() + (usageMeta?.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS),
-        estimatedTokens: r.inputTokens + r.outputTokens,
-        model: r.model,
+      const r = await nvidiaChat({
+        system: systemPrompt, user: userMessage, maxTokens, job: usageMeta?.nvidiaJob ?? jobForModel(model), config: nvidia,
+        accept: usageMeta?.expectJson ? looksLikeJsonObject : undefined,
       });
-      return r.text;
+      if (usageMeta) {
+        void recordAIUsage({ userId, feature, provider: 'nvidia', model: r.model, inputTokens: r.inputTokens, outputTokens: r.outputTokens });
+      }
+      const out = checkOutput(r.text);
+      span.end({
+        status: 'ok', provider: 'nvidia', model: r.model, inputTokens: r.inputTokens, outputTokens: r.outputTokens,
+        attempts: r.attempts, quality: quality(out.text), guard: guardFor(out.issues),
+      });
+      writeCache(cacheKey, { text: out.text, expiresAt: Date.now() + ttl, estimatedTokens: r.inputTokens + r.outputTokens, model: r.model });
+      return out.text;
     } catch (err) {
+      attempts = err instanceof NvidiaError ? err.attempts : [{ model: 'ladder', error: err instanceof Error ? err.message : String(err) }];
+      span.end({ status: 'error', provider: 'nvidia', model: 'ladder', attempts, guard: inputGuard, error: err instanceof Error ? err.message : String(err) });
       if (!apiKey || apiKey === NVIDIA_FREE_ONLY) {
         throw new Error(`${err instanceof Error ? err.message : 'Free NVIDIA models failed'} — and no paid AI key is set in Admin → AI Assistant to fall back to.`);
       }
@@ -316,28 +439,25 @@ export async function callAINonStreaming(
     throw new Error('The free NVIDIA models are switched off and no paid AI key is set — configure one in Admin → NVIDIA or Admin → AI Assistant.');
   }
 
+  // Size the call and pick the cheapest paid model that fits it.
+  const configured = provider === 'google' ? resolveGeminiModel(model) : model;
+  const tier = classifyTask({ feature, maxTokens, promptChars: systemPrompt.length + userMessage.length });
+  const route = usageMeta?.noRouting ? { model: configured, routedFrom: null } : routePaidModel(provider, configured, tier, await routingMode());
+  const paidModel = route.model;
+
+  const span = startSpan({ feature, userId });
   try {
+    let text: string;
+    let inTok: number;
+    let outTok: number;
+    let cacheRead = 0;
     if (provider === 'google') {
-      const effectiveModel = resolveGeminiModel(model);
       const genAI = new GoogleGenerativeAI(apiKey);
-      const gModel = genAI.getGenerativeModel({ model: effectiveModel, systemInstruction: systemPrompt });
+      const gModel = genAI.getGenerativeModel({ model: paidModel, systemInstruction: systemPrompt });
       const result = await gModel.generateContent(userMessage);
-      const text = result.response.text();
-      const inTok = result.response.usageMetadata?.promptTokenCount ?? Math.ceil((systemPrompt.length + userMessage.length) / 4);
-      const outTok = result.response.usageMetadata?.candidatesTokenCount ?? Math.ceil(text.length / 4);
-      if (usageMeta) {
-        void recordAIUsage({
-          ...usageMeta, provider: 'google', model: effectiveModel,
-          inputTokens: inTok, outputTokens: outTok,
-        });
-      }
-      aiResponseCache.set(cacheKey, {
-        text,
-        expiresAt: Date.now() + (usageMeta?.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS),
-        estimatedTokens: inTok + outTok,
-        model: effectiveModel,
-      });
-      return text;
+      text = result.response.text();
+      inTok = result.response.usageMetadata?.promptTokenCount ?? Math.ceil((systemPrompt.length + userMessage.length) / 4);
+      outTok = result.response.usageMetadata?.candidatesTokenCount ?? Math.ceil(text.length / 4);
     } else {
       const client = new Anthropic({ apiKey });
       // Use Anthropic ephemeral prompt caching automatically on large system prompts
@@ -345,33 +465,32 @@ export async function callAINonStreaming(
         ? [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }]
         : systemPrompt;
       const resp = await client.messages.create({
-        model,
+        model: paidModel,
         max_tokens: maxTokens,
         system: systemParam,
         messages: [{ role: 'user', content: userMessage }],
       });
-      const text = resp.content[0]?.type === 'text' ? resp.content[0].text : '';
-      if (usageMeta) {
-        void recordAIUsage({
-          ...usageMeta, provider: 'anthropic', model,
-          inputTokens: resp.usage.input_tokens, outputTokens: resp.usage.output_tokens,
-          cacheReadTokens: resp.usage.cache_read_input_tokens ?? 0,
-        });
-      }
-      aiResponseCache.set(cacheKey, {
-        text,
-        expiresAt: Date.now() + (usageMeta?.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS),
-        estimatedTokens: resp.usage.input_tokens + resp.usage.output_tokens,
-        model,
-      });
-      if (aiResponseCache.size > 1500) {
-        const now = Date.now();
-        for (const [k, v] of aiResponseCache) if (v.expiresAt < now) aiResponseCache.delete(k);
-      }
-      return text;
+      const first = resp.content.find((b) => b.type === 'text');
+      text = first && first.type === 'text' ? first.text : '';
+      inTok = resp.usage.input_tokens;
+      outTok = resp.usage.output_tokens;
+      cacheRead = resp.usage.cache_read_input_tokens ?? 0;
     }
+    if (usageMeta) {
+      void recordAIUsage({ userId, feature, provider, model: paidModel, inputTokens: inTok, outputTokens: outTok, cacheReadTokens: cacheRead });
+    }
+    const out = checkOutput(text);
+    span.end({
+      status: 'ok', provider, model: paidModel, inputTokens: inTok, outputTokens: outTok, cacheReadTokens: cacheRead,
+      costUsd: computeAICostUsd(paidModel, inTok, outTok, cacheRead), routedFrom: route.routedFrom, attempts,
+      quality: quality(out.text), guard: guardFor(out.issues),
+    });
+    writeCache(cacheKey, { text: out.text, expiresAt: Date.now() + ttl, estimatedTokens: inTok + outTok, model: paidModel });
+    return out.text;
   } catch (err: any) {
-    throw classifyAIProviderError(provider, model, err);
+    const classified = classifyAIProviderError(provider, paidModel, err);
+    span.end({ status: 'error', provider, model: paidModel, routedFrom: route.routedFrom, attempts, guard: inputGuard, error: classified.message });
+    throw classified;
   }
 }
 

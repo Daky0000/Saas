@@ -2016,6 +2016,79 @@ await pool.query(`CREATE INDEX IF NOT EXISTS ai_usage_created_idx ON ai_usage_lo
 await pool.query(`ALTER TABLE ai_usage_log ADD COLUMN IF NOT EXISTS cost_usd NUMERIC(12,6) NOT NULL DEFAULT 0;`).catch(() => undefined);
 await pool.query(`ALTER TABLE ai_usage_log ADD COLUMN IF NOT EXISTS credits_charged INTEGER NOT NULL DEFAULT 0;`).catch(() => undefined);
 
+// AI observability (server/aiTrace.ts): one row per model call, cache hit or
+// guard block — latency, cost, failed ladder rungs, guard and quality signals.
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS ai_call_traces (
+    id TEXT PRIMARY KEY,
+    trace_id TEXT,
+    user_id TEXT,
+    feature TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    status TEXT NOT NULL,
+    latency_ms INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd NUMERIC(12,6) NOT NULL DEFAULT 0,
+    routed_from TEXT,
+    attempts JSONB NOT NULL DEFAULT '[]'::jsonb,
+    guard JSONB,
+    quality JSONB,
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS ai_call_traces_created_idx ON ai_call_traces (created_at DESC);`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS ai_call_traces_feature_idx ON ai_call_traces (feature, created_at DESC);`).catch(() => undefined);
+
+// Response cache shared across instances and restarts (ai-helpers.ts writeCache).
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS ai_response_cache (
+    key TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    model TEXT NOT NULL,
+    tokens INTEGER NOT NULL DEFAULT 0,
+    expires_at TIMESTAMPTZ NOT NULL
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS ai_response_cache_expires_idx ON ai_response_cache (expires_at);`).catch(() => undefined);
+
+// Generation checkpoints (server/aiCheckpoints.ts): finished steps of a
+// multi-step generation, so a retry resumes instead of starting over.
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS generation_checkpoints (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    ref_id TEXT NOT NULL,
+    user_id TEXT,
+    steps JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status TEXT NOT NULL DEFAULT 'running',
+    attempts INTEGER NOT NULL DEFAULT 1,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS generation_checkpoints_updated_idx ON generation_checkpoints (updated_at);`).catch(() => undefined);
+
+// Eval runs (server/aiEvals.ts): each suite run, its score and per-case results.
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS ai_eval_runs (
+    id TEXT PRIMARY KEY,
+    suite TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    passed INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL DEFAULT 0,
+    score NUMERIC(5,4) NOT NULL DEFAULT 0,
+    results JSONB NOT NULL DEFAULT '[]'::jsonb,
+    triggered_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS ai_eval_runs_created_idx ON ai_eval_runs (created_at DESC);`).catch(() => undefined);
+
 // Audit trail for every credit movement: AI charges, image/video generation,
 // admin grants, monthly resets. delta is negative for spend.
 await pool.query(`

@@ -21,6 +21,7 @@ import {
   Globe,
   Wand2,
   Cpu,
+  Activity,
 } from 'lucide-react';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { AppUser, clearStoredUser } from '../utils/userSession';
@@ -43,6 +44,7 @@ const AdminLearn = lazy(() => import('../components/admin/AdminLearn'));
 const AdminAgents = lazy(() => import('../components/admin/AdminAgents'));
 const AdminMagnific = lazy(() => import('../components/admin/AdminMagnific'));
 const AdminNvidia = lazy(() => import('../components/admin/AdminNvidia'));
+const AdminAIOps = lazy(() => import('../components/admin/AdminAIOps'));
 const AdminKling = lazy(() => import('../components/admin/AdminKling'));
 const AdminGoogle = lazy(() => import('../components/admin/AdminGoogle'));
 const AdminOpenAI = lazy(() => import('../components/admin/AdminOpenAI'));
@@ -77,6 +79,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'media'
     | 'ai-config'
     | 'ai-skills'
+    | 'ai-ops'
     | 'billing'
     | 'apify'
     | 'learn'
@@ -109,6 +112,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     media: '/admin/media',
     'ai-config': '/admin/ai',
     'ai-skills': '/admin/ai/skills',
+    'ai-ops': '/admin/ai/ops',
     billing: '/admin/billing',
     apify: '/admin/apify',
     learn: '/admin/learn',
@@ -142,6 +146,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     media: 'Media Library',
     'ai-config': 'AI Configuration',
     'ai-skills': 'Create AI Skill',
+    'ai-ops': 'AI Ops — monitoring, guardrails, evals',
     billing: 'Subscriptions',
     apify: 'Apify Actors & Runs',
     learn: 'Daky Learn',
@@ -223,6 +228,7 @@ const Admin = ({ currentUser }: AdminProps) => {
   const aiItems: { id: AdminTab; label: string; icon: React.ElementType }[] = [
     { id: 'ai-config', label: 'Configuration', icon: Bot },
     { id: 'ai-skills', label: 'Create AI Skill', icon: Zap },
+    { id: 'ai-ops', label: 'AI Ops', icon: Activity },
     { id: 'learn', label: 'Daky Learn', icon: BookOpen },
     { id: 'nvidia', label: 'NVIDIA (free)', icon: Cpu },
     { id: 'magnific', label: 'Magnific AI', icon: Wand2 },
@@ -544,6 +550,7 @@ const Admin = ({ currentUser }: AdminProps) => {
               {activeTab === 'media' && <AdminMediaManagement />}
               {activeTab === 'ai-config' && <AdminAIConfig />}
               {activeTab === 'ai-skills' && <AdminAISkills />}
+              {activeTab === 'ai-ops' && <AdminAIOps />}
               {activeTab === 'billing' && <AdminBillingDashboard />}
               {activeTab === 'apify' && <AdminApify />}
               {activeTab === 'mcp' && <AdminMCP />}
