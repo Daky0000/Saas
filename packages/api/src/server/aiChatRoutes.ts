@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger } from '../logger.ts';
-import { resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits, recordFastPathSavings, chargeAICredits, resolveTextKey, isPaidKey, computeAICostUsd } from '../ai-helpers.ts';
+import { resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits, recordFastPathSavings, chargeAICredits, resolveTextKey, isPaidKey, computeAICostUsd, classifyAIProviderError } from '../ai-helpers.ts';
 import { DEFAULT_TOOL_RULES, ToolGuard, UNTRUSTED_RULE, canaryLine, capToolResult, checkOutput, fence, mergeScans, scanForInjection } from './aiGuard.ts';
 import { chatTurnKey, makeToolMemo } from './aiCheckpoints.ts';
 import { classifyChatTurn, fitHistory, routePaidModel, routingMode } from './aiRouting.ts';
@@ -1339,8 +1339,9 @@ export function registerAIChatRoutes({
             costUsd: computeAICostUsd(effectiveModel, inTok, outTok), routedFrom: route.routedFrom, attempts: freeAttempts, guard: guardOrNull(),
           });
         } catch (err: any) {
-          span.end({ status: 'error', provider: 'google', model: effectiveModel, routedFrom: route.routedFrom, attempts: freeAttempts, guard: guardOrNull(), error: err?.message || String(err) });
-          throw err;
+          const classified = classifyAIProviderError('google', effectiveModel, err);
+          span.end({ status: 'error', provider: 'google', model: effectiveModel, routedFrom: route.routedFrom, attempts: freeAttempts, guard: guardOrNull(), error: classified.message });
+          throw classified;
         }
         res.write('data: [DONE]\n\n');
         res.end();
@@ -1407,8 +1408,10 @@ export function registerAIChatRoutes({
           ];
         }
       } catch (err: any) {
-        span.end({ status: 'error', provider: 'anthropic', model: paidModel, routedFrom: route.routedFrom, attempts: freeAttempts, guard: guardOrNull(), error: err?.message || String(err) });
-        throw err;
+        // Vendor errors arrive as raw JSON ("400 {"type":"error"…"); say what to fix instead.
+        const classified = classifyAIProviderError('anthropic', paidModel, err);
+        span.end({ status: 'error', provider: 'anthropic', model: paidModel, routedFrom: route.routedFrom, attempts: freeAttempts, guard: guardOrNull(), error: classified.message });
+        throw classified;
       }
 
       void recordAIUsage({

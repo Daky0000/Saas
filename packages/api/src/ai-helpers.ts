@@ -507,7 +507,7 @@ export function classifyAIProviderError(provider: 'anthropic' | 'google', model:
     return new Error('Anthropic rate limit exceeded. Check your usage limits at console.anthropic.com.');
   }
   if (lower.includes('credit balance')) {
-    return new Error('Your Anthropic account has insufficient credits — the API key is fine. Add credits at console.anthropic.com → Billing.');
+    return new Error('The Anthropic account is out of credits (the key itself is fine). Add credits at console.anthropic.com → Billing, or paste the free NVIDIA key in Admin → NVIDIA so the free models answer first.');
   }
   if (status === 401 || lower.includes('authentication_error') || lower.includes('api key not valid') || lower.includes('invalid x-api-key') || lower.includes('unauthorized')) {
     return new Error(`Invalid ${providerName} API key. Please check your key and try again.`);

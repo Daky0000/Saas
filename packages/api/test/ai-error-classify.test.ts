@@ -30,7 +30,7 @@ test('ai errors: billing invalid_request_error is NOT reported as a bad key', as
   const classify = await loadClassifier();
   const out = classify('anthropic', 'claude-opus-4-8', apiError(400, '400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}'));
   assert.doesNotMatch(out.message, /Invalid Anthropic API key/);
-  assert.match(out.message, /insufficient credits/i);
+  assert.match(out.message, /out of credits/i);
 });
 
 test('ai errors: unknown model maps to model message, not key message', async () => {
