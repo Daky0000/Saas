@@ -1,9 +1,10 @@
 import { randomUUID } from 'crypto';
 import { MAGNIFIC_IMAGE_MODELS, MAGNIFIC_VIDEO_MODELS } from './magnificRoutes.ts';
 import {
-  FORMAT_LABEL, IMAGE_CREDITS, PLATFORM_LABEL, SOCIAL_COPY_CREDITS, VIDEO_CREDITS, clampSlides, mediaPlan,
+  bestSlot, validTimeZone, FORMAT_LABEL, socialImageCredits, PLATFORM_LABEL, socialCopyCredits, socialVideoCredits, clampSlides, mediaPlan,
   normalizeFormat, normalizePlatform, postCredits, type SocialFormat, type SocialPlatform,
 } from './socialFormats.ts';
+import { creditsForMagnific, magnificAudioCost, magnificEditCost, magnificImageCost, magnificLipSyncCost, magnificOneCost, magnificVideoCost } from './aiPricing.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chat sessions (history) and credit-gated actions.
@@ -19,7 +20,6 @@ import {
 type Query = (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;
 
 /** Credits for the words of one post (the content-plan copy rate); media is priced on top. */
-export const BATCH_POST_CREDITS = SOCIAL_COPY_CREDITS;
 export const BATCH_MAX_POSTS = 30;
 
 let ensured: Promise<void> | null = null;
@@ -91,43 +91,49 @@ export function estimateToolCredits(name: string, input: any): CreditEstimate | 
       }
       const platforms = new Set(posts.map((p) => p.platform)).size;
       const lines = [...groups].map(([k, g]) => `${g.count} × ${k}: ${g.credits} credits`);
-      lines.push(`Includes writing (${SOCIAL_COPY_CREDITS}/post)${images ? `, ${images} image${images === 1 ? '' : 's'} (${IMAGE_CREDITS} each)` : ''}${videos ? `, ${videos} video${videos === 1 ? '' : 's'} (${VIDEO_CREDITS} each)` : ''}. You're only charged for what is made.`);
+      lines.push(`Includes writing (${socialCopyCredits()}/post)${images ? `, ${images} image${images === 1 ? '' : 's'} (${socialImageCredits()} each)` : ''}${videos ? `, ${videos} video${videos === 1 ? '' : 's'} (${socialVideoCredits()} each)` : ''}. You're only charged for what is made.`);
       return {
         credits,
         label: `Create ${n} post${n === 1 ? '' : 's'}${platforms > 1 ? ` across ${platforms} platforms` : ` for ${PLATFORM_LABEL[posts[0].platform]}`}`,
         lines,
       };
     }
+    // Magnific: the real price × 1.54 (server/aiPricing.ts), same as what the tool charges.
     case 'magnific_one_generate': {
-      const credits = input?.mode === 'draft' ? 4 : (input?.resolution === '4k' ? 8 : 6);
-      return { credits, label: 'Generate an image with Magnific One', lines: [`Magnific One, ${input?.mode === 'draft' ? 'draft sheet' : `${input?.resolution || '2k'} image`}: ${credits} credits`] };
+      const opts = { mode: input?.mode === 'draft' ? 'draft' : 'quality', quality: input?.quality === 'normal' ? 'medium' : 'high', resolution: ['1k', '2k', '4k'].includes(input?.resolution) ? input.resolution : '2k' };
+      const credits = creditsForMagnific(magnificOneCost(opts));
+      return { credits, label: 'Generate an image with Magnific One', lines: [`Magnific One, ${opts.mode === 'draft' ? 'draft sheet' : `${opts.resolution} ${opts.quality === 'high' ? 'max quality' : 'standard quality'}`}: ${credits} credits`] };
     }
     case 'magnific_generate_image': {
       const model = input?.model && MAGNIFIC_IMAGE_MODELS[input.model] ? input.model : 'magnific-one';
-      const credits = MAGNIFIC_IMAGE_MODELS[model]?.credits ?? 5;
-      return { credits, label: `Generate an image (${model})`, lines: [`${model} image: ${credits} credits`] };
+      const credits = creditsForMagnific(magnificImageCost(model, { resolution: input?.resolution }));
+      return { credits, label: `Generate an image (${model})`, lines: [`${model} image${input?.resolution === '4k' ? ' (4K)' : ''}: ${credits} credits`] };
     }
     case 'magnific_edit_image': {
       const type = String(input?.type || 'upscale');
-      const credits = type === 'remove-background' ? 1 : 5;
-      return { credits, label: `Edit an image (${type})`, lines: [`${type}: ${credits} credits`] };
+      const credits = creditsForMagnific(magnificEditCost(type, input?.scale_factor));
+      return { credits, label: `Edit an image (${type})`, lines: [`${type}${input?.scale_factor ? ` ${input.scale_factor}` : ''}: ${credits} credits`] };
     }
     case 'magnific_generate_video': {
       const model = input?.model && MAGNIFIC_VIDEO_MODELS[input.model] ? input.model : (input?.image_url ? 'kling-v2-6-pro' : 'ltx-2-pro');
-      const credits = MAGNIFIC_VIDEO_MODELS[model]?.credits ?? 25;
-      return { credits, label: `Generate a video (${model})`, lines: [`${model} video: ${credits} credits`] };
+      const credits = creditsForMagnific(magnificVideoCost(model, input ?? {}));
+      return { credits, label: `Generate a video (${model})`, lines: [`${model}, ${Number(input?.duration) || 5} s${input?.resolution ? ` ${input.resolution}` : ''}${input?.generate_audio ? ' with audio' : ''}: ${credits} credits`] };
     }
-    case 'magnific_lip_sync':
-      return { credits: 30, label: 'Animate a lip-sync avatar', lines: ['OmniHuman lip-sync: 30 credits'] };
+    case 'magnific_lip_sync': {
+      const credits = creditsForMagnific(magnificLipSyncCost());
+      return { credits, label: 'Animate a lip-sync avatar', lines: [`OmniHuman lip-sync (audio up to 30 s): ${credits} credits`] };
+    }
     case 'magnific_generate_audio': {
       const type = String(input?.type || 'sound-effects');
-      const credits = type === 'music-generation' ? 6 : 4;
-      return { credits, label: `Generate audio (${type})`, lines: [`${type}: ${credits} credits`] };
+      const credits = creditsForMagnific(magnificAudioCost(type, input?.duration_seconds));
+      return { credits, label: `Generate audio (${type})`, lines: [`${type}${input?.duration_seconds ? `, ${input.duration_seconds} s` : ''}: ${credits} credits`] };
     }
     case 'magnific_space_or_flow': {
       const action = String(input?.action || 'run_space');
       if (action !== 'run_space' && action !== 'run_flow') return null;
-      return { credits: 10, label: action === 'run_flow' ? 'Run a Magnific Flow' : 'Run a Magnific Space', lines: ['Estimated 10 credits (the final charge follows the run)'] };
+      // Replaced by the Space's own node-by-node estimate when the chat prices it.
+      const credits = creditsForMagnific(1500);
+      return { credits, label: action === 'run_flow' ? 'Run a Magnific Flow' : 'Run a Magnific Space', lines: [`Estimated ${credits} credits`] };
     }
     default:
       return null;
@@ -145,6 +151,8 @@ export interface BatchPost {
   /** Art direction for the visuals, when the planner gave one. */
   visual: string;
   scheduled_at: string;
+  /** Only when the user asked for drafts: saved unscheduled. */
+  as_draft: boolean;
 }
 
 /**
@@ -155,21 +163,22 @@ export interface BatchPost {
  */
 export function batchPosts(input: any, now = new Date()): BatchPost[] {
   const raw: any[] = Array.isArray(input?.posts) ? input.posts.slice(0, BATCH_MAX_POSTS) : [];
-  const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 9, 0, 0));
+  const tz = validTimeZone(input?.timezone);
   const out: BatchPost[] = [];
   raw.forEach((p, i) => {
     const topic = String(p?.topic ?? p?.title ?? p?.brief ?? '').trim().slice(0, 600);
     if (!topic) return;
     const when = p?.scheduled_at ? new Date(p.scheduled_at) : null;
-    const valid = when && !Number.isNaN(when.getTime()) && when.getTime() > now.getTime();
-    const scheduled_at = (valid ? when! : new Date(first.getTime() + i * 86_400_000)).toISOString();
+    const valid = when && !Number.isNaN(when.getTime()) && when.getTime() > now.getTime() + 5 * 60_000;
     const named = [p?.platform, ...(Array.isArray(p?.platforms) ? p.platforms : []), ...(p?.platform || Array.isArray(p?.platforms) ? [] : Array.isArray(input?.platforms) ? input.platforms : [])]
       .map(normalizePlatform).filter((x): x is SocialPlatform => Boolean(x));
     const platforms = [...new Set(named.length ? named : ['instagram' as SocialPlatform])];
     for (const platform of platforms) {
       const format = normalizeFormat(platform, p?.format);
+      // No usable time from the planner: the platform's best slot in the user's timezone, one entry per day from tomorrow.
+      const scheduled_at = (valid ? when! : bestSlot(platform, 1 + i, tz, now)).toISOString();
       out.push({
-        topic, platform, format, scheduled_at,
+        topic, platform, format, scheduled_at, as_draft: p?.as_draft === true,
         slides: format === 'carousel' ? clampSlides(p?.slides) : 0,
         with_image: format === 'text' ? Boolean(p?.with_image) : false,
         visual: String(p?.visual ?? p?.visual_direction ?? '').trim().slice(0, 600),

@@ -1,4 +1,5 @@
 import express from 'express';
+import { creditsForMagnific, magnificOneCost } from './aiPricing.ts';
 import type { Router, Response } from 'express';
 import type { Request } from '../types/http.ts';
 import type { Pool } from 'pg';
@@ -53,7 +54,8 @@ export const SOCIAL_PLATFORMS = ['facebook', 'instagram', 'linkedin', 'twitter',
 // underpricing a plan.
 const RATE_COPY_PER_POST = 2;
 const RATE_QA_PER_POST = 1;
-const RATE_PER_IMAGE = 3;
+/** A featured image: Magnific One, 2k medium (180 Magnific credits) × 1.54 — see server/aiPricing.ts. */
+const ratePerImage = () => creditsForMagnific(magnificOneCost({ quality: 'medium', resolution: '2k' }));
 
 // Pieces per day a plan may ask for. The DB constraint matches.
 export const MAX_PLAN_PER_DAY = 48;
@@ -89,7 +91,7 @@ export const CLAIM_DUE_PLANS_SQL = `UPDATE content_plans SET
          RETURNING *`;
 
 export function planCreditFloor(totalPosts: number, totalImages: number): number {
-  return Math.max(1, totalPosts) * (RATE_COPY_PER_POST + RATE_QA_PER_POST) + Math.max(0, totalImages) * RATE_PER_IMAGE;
+  return Math.max(1, totalPosts) * (RATE_COPY_PER_POST + RATE_QA_PER_POST) + Math.max(0, totalImages) * ratePerImage();
 }
 
 // Fallback pricing when the agents are unavailable.
@@ -136,7 +138,7 @@ export async function generateFeaturedImage(prompt: string): Promise<string | nu
   if (magnificKey) {
     try {
       // Magnific links expire; the piece keeps a copy in object storage.
-      const magOne = await magnificOneGenerate({ prompt, mode: 'quality', quality: 'high', resolution: '2k', aspect_ratio: '1:1' }, magnificKey);
+      const magOne = await magnificOneGenerate({ prompt, mode: 'quality', quality: 'medium', resolution: '2k', aspect_ratio: '1:1' }, magnificKey);
       if (magOne.url && !magOne.error) return durableMediaUrl(magOne.url, 'content-plan', { jpeg: true });
       const magMystic = await magnificGenerateImage('mystic', prompt, '1:1', magnificKey);
       if (magMystic.url && !magMystic.error) return durableMediaUrl(magMystic.url, 'content-plan', { jpeg: true });
@@ -322,7 +324,7 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
         ? await cp.step<string | null>('image', () => generateFeaturedImage(String(piece.image_prompt)))
         : null;
       if (imageUrl) {
-        await cp.step('image_charged', () => chargeAICredits(plan.user_id, 3, 'content_plan_image', { plan_id: plan.id }).then(() => true).catch(() => false));
+        await cp.step('image_charged', () => chargeAICredits(plan.user_id, ratePerImage(), 'content_plan_image', { plan_id: plan.id }).then(() => true).catch(() => false));
       }
 
       // Step 4 — the post. Scheduled (not draft) so the piece shows on the
@@ -430,7 +432,7 @@ Respond ONLY with JSON: {"total_posts": ${totalPosts}, "posts_with_images": <int
       // 2. Ledger — the price
       const calcRaw = await callAINonStreaming(
         aiCfg.provider, apiKey, model,
-        `You are Ledger, the Credit Calculator. You price content production plans in platform credits so the platform never generates at a loss. Internal rate card: copy generation ${RATE_COPY_PER_POST} credits per post, quality review ${RATE_QA_PER_POST} credit per post, featured image ${RATE_PER_IMAGE} credits per image. Long custom instructions, many platforms, or unusually long content justify a surcharge of up to 25%. Never price below the rate card.`,
+        `You are Ledger, the Credit Calculator. You price content production plans in platform credits so the platform never generates at a loss. Internal rate card: copy generation ${RATE_COPY_PER_POST} credits per post, quality review ${RATE_QA_PER_POST} credit per post, featured image ${ratePerImage()} credits per image. Long custom instructions, many platforms, or unusually long content justify a surcharge of up to 25%. Never price below the rate card.`,
         `Price this blueprint and respond ONLY with JSON {"total_credits": <int>, "breakdown": {"copy": <int>, "quality_review": <int>, "images": <int>, "surcharge": <int>}, "reason": "one line"}:\n${JSON.stringify({ ...blueprint, custom_instructions_length: String(plan.custom_instructions || '').length, platforms: blueprint.platforms ?? socials })}`,
         500,
         { userId: plan.user_id, feature: 'content_plan_pricing' }

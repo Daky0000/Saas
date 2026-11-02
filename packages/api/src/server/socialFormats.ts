@@ -1,4 +1,4 @@
-import { MAGNIFIC_IMAGE_MODELS, MAGNIFIC_VIDEO_MODELS } from './magnificRoutes.ts';
+import { POST_COPY_WORST_USD, creditsForMagnific, creditsForUsd, magnificImageCost, magnificVideoCost } from './aiPricing.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Social post formats: what each platform's post looks like, how to write it,
@@ -27,10 +27,16 @@ export const PLATFORM_FORMATS: Record<SocialPlatform, SocialFormat[]> = {
 export const SOCIAL_IMAGE_MODEL = 'magnific-one';
 export const SOCIAL_VIDEO_MODEL_FROM_IMAGE = 'kling-v2-6-pro';
 export const SOCIAL_VIDEO_MODEL_FROM_TEXT = 'ltx-2-pro';
-export const SOCIAL_COPY_CREDITS = 2;
-export const IMAGE_CREDITS = MAGNIFIC_IMAGE_MODELS[SOCIAL_IMAGE_MODEL]?.credits ?? 6;
-/** A video is drawn from its cover image (image-to-video), so it costs a cover image plus the video. */
-export const VIDEO_CREDITS = MAGNIFIC_VIDEO_MODELS[SOCIAL_VIDEO_MODEL_FROM_IMAGE]?.credits ?? 30;
+/** Social images: Magnific One at 2k, medium quality (Magnific's standard finished image). */
+export const SOCIAL_IMAGE_OPTS = { quality: 'medium', resolution: '2k' } as const;
+export const SOCIAL_VIDEO_SECONDS = 5;
+
+// Prices are the provider cost × 1.54, in credits (server/aiPricing.ts).
+/** Writing one post: free models normally; priced for the worst case on the paid fallback, never below 2. */
+export function socialCopyCredits(): number { return Math.max(2, creditsForUsd(POST_COPY_WORST_USD)); }
+export function socialImageCredits(): number { return creditsForMagnific(magnificImageCost(SOCIAL_IMAGE_MODEL, SOCIAL_IMAGE_OPTS)); }
+/** A video is animated from its cover image, so a reel costs a cover image plus this. */
+export function socialVideoCredits(): number { return creditsForMagnific(magnificVideoCost(SOCIAL_VIDEO_MODEL_FROM_IMAGE, { duration: SOCIAL_VIDEO_SECONDS, resolution: '1080p' })); }
 
 export const MIN_SLIDES = 3;
 export const MAX_SLIDES = 10;
@@ -80,7 +86,7 @@ export function clampSlides(slides?: number): number {
 
 export function postCredits(format: SocialFormat, slides?: number, withImage?: boolean): number {
   const m = mediaPlan(format, slides, withImage);
-  return SOCIAL_COPY_CREDITS + m.images * IMAGE_CREDITS + m.videos * VIDEO_CREDITS;
+  return socialCopyCredits() + m.images * socialImageCredits() + m.videos * socialVideoCredits();
 }
 
 export function aspectRatioFor(platform: SocialPlatform, format: SocialFormat): string {
@@ -193,4 +199,68 @@ export function slidePrompt(style: string, slide: { headline: string; body: stri
     index === 0 ? 'This is the cover slide: the strongest visual, designed to stop the scroll.' : '',
     index === total - 1 ? 'This is the closing slide: a clear call to action.' : '',
   ].filter(Boolean).join(' ');
+}
+
+// ── Best times to post ───────────────────────────────────────────────────────
+//
+// Local time in the user's timezone. Hours and days follow the platform
+// engagement studies (Sprout Social / Hootsuite / Later, 2024–2026): mid-week
+// mornings for LinkedIn and X, late morning for Instagram, evenings for
+// TikTok and Pinterest.
+
+export const BEST_TIMES: Record<SocialPlatform, { hour: number; minute: number; days: number[]; why: string }> = {
+  instagram: { hour: 11, minute: 0, days: [1, 2, 3, 4, 5], why: 'weekday late morning' },
+  facebook: { hour: 9, minute: 0, days: [1, 2, 3, 4, 5], why: 'weekday morning' },
+  linkedin: { hour: 8, minute: 30, days: [2, 3, 4], why: 'Tue–Thu before work' },
+  x: { hour: 9, minute: 0, days: [1, 2, 3, 4, 5], why: 'weekday morning' },
+  threads: { hour: 12, minute: 0, days: [1, 2, 3, 4, 5], why: 'weekday lunchtime' },
+  tiktok: { hour: 19, minute: 0, days: [0, 1, 2, 3, 4, 5, 6], why: 'evening' },
+  youtube: { hour: 15, minute: 0, days: [4, 5, 6], why: 'Thu–Sat afternoon' },
+  pinterest: { hour: 20, minute: 0, days: [0, 5, 6], why: 'Fri–Sun evening' },
+};
+
+export function validTimeZone(tz: unknown): string {
+  const t = String(tz || '').trim();
+  if (!t) return 'UTC';
+  try { new Intl.DateTimeFormat('en-US', { timeZone: t }); return t; } catch { return 'UTC'; }
+}
+
+/** The calendar date (y, m, d, weekday) of an instant in a timezone. */
+function localParts(at: Date, tz: string): { y: number; m: number; d: number; wd: number; h: number; min: number } {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' })
+    .formatToParts(at).reduce((o, p) => ({ ...o, [p.type]: p.value }), {} as Record<string, string>);
+  const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(parts.weekday);
+  return { y: +parts.year, m: +parts.month, d: +parts.day, wd, h: +parts.hour % 24, min: +parts.minute };
+}
+
+/** The UTC instant of a local wall-clock time in a timezone. */
+export function zonedTime(y: number, m: number, d: number, h: number, min: number, tz: string): Date {
+  const guess = Date.UTC(y, m - 1, d, h, min);
+  const p = localParts(new Date(guess), tz);
+  const asLocal = Date.UTC(p.y, p.m - 1, p.d, p.h, p.min);
+  return new Date(guess - (asLocal - guess));
+}
+
+/**
+ * The best slot for a platform on or after `dayOffset` days from today (in the
+ * user's timezone), moved forward to the platform's best weekday when needed.
+ */
+export function bestSlot(platform: SocialPlatform, dayOffset: number, tz: string, now = new Date()): Date {
+  const best = BEST_TIMES[platform];
+  const today = localParts(now, tz);
+  for (let extra = 0; extra < 8; extra++) {
+    const base = new Date(Date.UTC(today.y, today.m - 1, today.d + dayOffset + extra));
+    const wd = base.getUTCDay();
+    if (!best.days.includes(wd)) continue;
+    const at = zonedTime(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate(), best.hour, best.minute, tz);
+    if (at.getTime() > now.getTime() + 30 * 60_000) return at;
+  }
+  return zonedTime(today.y, today.m, today.d + dayOffset + 1, best.hour, best.minute, tz);
+}
+
+/** One line for the planner: when to post on each platform, in the user's time. */
+export function bestTimesGuide(tz: string): string {
+  return `Best posting times (the user's local time, ${tz}): ` + SOCIAL_PLATFORMS
+    .map((p) => `${PLATFORM_LABEL[p]} ${String(BEST_TIMES[p].hour).padStart(2, '0')}:${String(BEST_TIMES[p].minute).padStart(2, '0')} (${BEST_TIMES[p].why})`)
+    .join('; ') + '.';
 }

@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { creditsForUsd } from '../aiPricing.ts';
 import { scanForPromptInjection } from './validationAndPolicyService.ts';
 import type {
   BrandProfileRecord,
@@ -238,7 +239,7 @@ const DEFAULT_MODEL_REGISTRY: ModelCapabilityEntry[] = [
     supports_exact_text_in_image: false,
     latency_tier: 'standard',
     sync_mode: 'async_task',
-    provider_cost_usd: 0.08,
+    provider_cost_usd: 0.6, // 2k high: 600 Magnific credits (Magnific cost simulator, 2 Nov 2026)
     internal_credits: 10,
     pricing: { method: 'flat_estimate', source: 'Internal rate card; Magnific task responses report no usage' },
     enabled: true,
@@ -260,7 +261,7 @@ const DEFAULT_MODEL_REGISTRY: ModelCapabilityEntry[] = [
     supports_exact_text_in_image: true,
     latency_tier: 'standard',
     sync_mode: 'async_task',
-    provider_cost_usd: 0.09,
+    provider_cost_usd: 0.075, // 75 Magnific credits (Magnific cost simulator, 2 Nov 2026)
     internal_credits: 12,
     pricing: { method: 'flat_estimate', source: 'Internal rate card; Magnific task responses report no usage' },
     enabled: true,
@@ -284,7 +285,7 @@ const DEFAULT_MODEL_REGISTRY: ModelCapabilityEntry[] = [
     supports_exact_text_in_image: false,
     latency_tier: 'heavy',
     sync_mode: 'async_task',
-    provider_cost_usd: 0.45,
+    provider_cost_usd: 3.95, // 5 s 1080p: 3,950 Magnific credits (Magnific cost simulator, 2 Nov 2026)
     internal_credits: 35,
     pricing: { method: 'flat_estimate', source: 'Internal rate card; Magnific task responses report no usage' },
     enabled: true,
@@ -307,7 +308,7 @@ const DEFAULT_MODEL_REGISTRY: ModelCapabilityEntry[] = [
     supports_exact_text_in_image: true,
     latency_tier: 'heavy',
     sync_mode: 'async_task',
-    provider_cost_usd: 0.48,
+    provider_cost_usd: 0.475, // 5 s 1080p: 475 Magnific credits (Magnific cost simulator, 2 Nov 2026)
     internal_credits: 38,
     pricing: { method: 'flat_estimate', source: 'Internal rate card; Magnific task responses report no usage' },
     enabled: true,
@@ -365,10 +366,13 @@ export function refreshModelRegistryOverrides(overrides: Record<string, Partial<
 }
 
 export function getModelCapabilityRegistry(): ModelCapabilityEntry[] {
-  return DEFAULT_MODEL_REGISTRY.map((entry) => ({
-    ...entry,
-    ...(runtimeRegistryOverrides[entry.id] ?? {}),
-  }));
+  return DEFAULT_MODEL_REGISTRY.map((entry) => {
+    const override = runtimeRegistryOverrides[entry.id] ?? {};
+    const merged = { ...entry, ...override };
+    // Credits follow the provider cost × 1.54 (server/aiPricing.ts) unless an admin set them explicitly.
+    if (override.internal_credits === undefined && merged.provider_cost_usd > 0) merged.internal_credits = creditsForUsd(merged.provider_cost_usd);
+    return merged;
+  });
 }
 
 function rolledOutModelIds(env: NodeJS.ProcessEnv = process.env): Set<string> {

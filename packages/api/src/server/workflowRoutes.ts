@@ -1,4 +1,5 @@
 import express from 'express';
+import { creditsForMagnific, magnificAudioCost, magnificImageCost, magnificLipSyncCost, magnificVideoCost } from './aiPricing.ts';
 import { FAST_MODEL, recordAIUsage, hasAICredits, chargeAICredits, callAINonStreaming, resolveTextKey } from '../ai-helpers.ts';
 import type { Router, Response } from 'express';
 import type { Request } from '../types/http.ts';
@@ -184,7 +185,7 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
                     if (postId) {
                       await dbQuery(`UPDATE blog_posts SET featured_image = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3`, [genRes.url, postId, userId]).catch(() => undefined);
                     }
-                    await chargeAICredits(userId, 6, 'workflow_magnific_image', { model: magModel });
+                    await chargeAICredits(userId, creditsForMagnific(magnificImageCost(magModel, { mode: cfg.mode, quality: cfg.quality, resolution: cfg.resolution || '2k' })), 'workflow_magnific_image', { model: magModel });
                     addLog(node.id, `Generated Magnific (${magModel}) image: ${genRes.url}`);
                   } else {
                     addLog(node.id, `Magnific image fallback to prompt notification (${genRes.error || 'no url'})`);
@@ -221,7 +222,7 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
               );
               if (vidRes.url) {
                 triggerData.video_url = vidRes.url;
-                await chargeAICredits(userId, 25, 'workflow_magnific_video', { model: vidRes.model });
+                await chargeAICredits(userId, creditsForMagnific(magnificVideoCost(String(vidRes.model), { duration: cfg.duration || 5, resolution: cfg.resolution, generate_audio: cfg.generate_audio })), 'workflow_magnific_video', { model: vidRes.model });
                 addLog(node.id, `Generated Magnific video (${vidRes.model}): ${vidRes.url}`);
               } else {
                 addLog(node.id, `generate_ai_video error: ${vidRes.error}`);
@@ -239,7 +240,7 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
               const lipRes = await magnificLipSync({ image_url: imgUrl, audio_url: audUrl, prompt: cfg.prompt, resolution: cfg.resolution || '1080p' }, magnificKey);
               if (lipRes.url) {
                 triggerData.video_url = lipRes.url;
-                await chargeAICredits(userId, 30, 'workflow_magnific_lipsync', {});
+                await chargeAICredits(userId, creditsForMagnific(magnificLipSyncCost()), 'workflow_magnific_lipsync', {});
                 addLog(node.id, `Generated OmniHuman 1.5 lip-sync video: ${lipRes.url}`);
               } else {
                 addLog(node.id, `generate_ai_lipsync error: ${lipRes.error}`);
@@ -266,7 +267,7 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
               );
               if (audRes.url) {
                 triggerData.audio_url = audRes.url;
-                await chargeAICredits(userId, 5, 'workflow_magnific_audio', { type: audRes.type });
+                await chargeAICredits(userId, creditsForMagnific(magnificAudioCost(String(audRes.type), cfg.duration_seconds)), 'workflow_magnific_audio', { type: audRes.type });
                 addLog(node.id, `Generated Magnific audio (${audRes.type}): ${audRes.url}`);
               } else {
                 addLog(node.id, `generate_ai_audio error: ${audRes.error}`);

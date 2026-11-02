@@ -30,11 +30,11 @@ import {
 } from './magnificRoutes.ts';
 import { durableMediaUrl, durableMediaUrls, getMediaStorage, storeMediaBytes } from './mediaStore.ts';
 import {
-  IMAGE_CREDITS, PLATFORM_LABEL, FORMAT_LABEL, SOCIAL_COPY_CREDITS, SOCIAL_IMAGE_MODEL, SOCIAL_VIDEO_MODEL_FROM_IMAGE, VIDEO_CREDITS,
-  aspectRatioFor, isVideoFormat, parsePiece, pieceSchema, publishText, slidePrompt, writingRules,
+  socialImageCredits, PLATFORM_LABEL, FORMAT_LABEL, socialCopyCredits, SOCIAL_IMAGE_MODEL, SOCIAL_IMAGE_OPTS, SOCIAL_VIDEO_MODEL_FROM_IMAGE, socialVideoCredits,
+  aspectRatioFor, bestTimesGuide, isVideoFormat, validTimeZone, parsePiece, pieceSchema, publishText, slidePrompt, writingRules,
 } from './socialFormats.ts';
 import {
-  BATCH_MAX_POSTS, BATCH_POST_CREDITS, CUSTOM_INSTRUCTIONS_MAX, batchPosts, claimPendingAction, createPendingAction, customInstructionsBlock,
+  BATCH_MAX_POSTS, CUSTOM_INSTRUCTIONS_MAX, batchPosts, claimPendingAction, createPendingAction, customInstructionsBlock,
   ensureChatTables, estimateToolCredits, finishPendingAction, getCustomInstructions, sanitizeSessionMessages, saveCustomInstructions,
 } from './chatActions.ts';
 
@@ -387,7 +387,7 @@ You are trained on the complete **Magnific Academy** methodology for all non-tex
 const AI_TOOLS: Anthropic.Tool[] = [
   {
     name: 'create_posts_batch',
-    description: `Create native social media posts and put each on the calendar as soon as it is made — copy written for its platform, plus the images (one, or a matching set for a carousel) and video it needs, generated with Magnific. Use for any request for social posts, a content calendar, or 2+ posts. One entry = one post on ONE platform; for the same idea on Instagram and LinkedIn, add two entries (each is written natively). Give a brief, not finished text. The user sees a credit estimate (writing ${SOCIAL_COPY_CREDITS}/post, images ${IMAGE_CREDITS} each, videos ${VIDEO_CREDITS} each) and confirms before anything runs. Max ${BATCH_MAX_POSTS} posts.`,
+    description: `Create native social media posts and put each on the calendar as soon as it is made — copy written for its platform, plus the images (one, or a matching set for a carousel) and video it needs, generated with Magnific. Use for any request for social posts, a content calendar, or 2+ posts. One entry = one post on ONE platform; for the same idea on Instagram and LinkedIn, add two entries (each is written natively). Give a brief, not finished text. The user sees a credit estimate (writing ${socialCopyCredits()}/post, images ${socialImageCredits()} each, videos ${socialVideoCredits()} each) and confirms before anything runs. Max ${BATCH_MAX_POSTS} posts.`,
     input_schema: {
       type: 'object',
       properties: {
@@ -403,7 +403,8 @@ const AI_TOOLS: Anthropic.Tool[] = [
               slides: { type: 'number', description: 'Carousel only: number of slides (3-10, default 5).' },
               with_image: { type: 'boolean', description: 'Text posts only: true to add one image anyway.' },
               visual: { type: 'string', description: 'Optional art direction for the images/video (style, palette, subject).' },
-              scheduled_at: { type: 'string', description: 'ISO 8601 UTC datetime to publish, at a good time for that platform. Omit to schedule from tomorrow 09:00 UTC.' },
+              scheduled_at: { type: 'string', description: 'ISO 8601 datetime with offset, at the best time for that platform in the user\'s timezone (see BEST POSTING TIMES). Omit and the server picks the platform\'s best slot, one entry per day from tomorrow.' },
+              as_draft: { type: 'boolean', description: 'Only true when the user explicitly asked for drafts / not to schedule. Default: every post is scheduled.' },
             },
             required: ['platform', 'format', 'topic'],
           },
@@ -1017,7 +1018,8 @@ export function registerAIChatRoutes({
       case 'magnific_one_generate': {
         const magnificKey = await getMagnificApiKey(pool as any);
         if (!magnificKey) return { success: false, error: 'Magnific API key is not configured in Admin → Magnific AI.' };
-        const creditCost = input?.mode === 'draft' ? 4 : (input?.resolution === '4k' ? 8 : 6);
+        // The same price the estimate card showed: Magnific's cost × 1.54.
+        const creditCost = estimateToolCredits(name, input)?.credits ?? 0;
         const r = await magnificOneGenerate(
           {
             prompt: String(input?.prompt || ''),
@@ -1047,7 +1049,8 @@ export function registerAIChatRoutes({
         const magnificKey = await getMagnificApiKey(pool as any);
         if (!magnificKey) return { success: false, error: 'Magnific API key is not configured in Admin → Magnific AI.' };
         const modelKey = input?.model && MAGNIFIC_IMAGE_MODELS[input.model] ? input.model : 'magnific-one';
-        const creditCost = MAGNIFIC_IMAGE_MODELS[modelKey]?.credits ?? 5;
+        // The same price the estimate card showed: Magnific's cost × 1.54.
+        const creditCost = estimateToolCredits(name, input)?.credits ?? 0;
         const r = await magnificGenerateImage(
           modelKey,
           String(input?.prompt || ''),
@@ -1076,7 +1079,8 @@ export function registerAIChatRoutes({
         const magnificKey = await getMagnificApiKey(pool as any);
         if (!magnificKey) return { success: false, error: 'Magnific API key is not configured in Admin → Magnific AI.' };
         const editType = input?.type || 'upscale';
-        const creditCost = editType === 'remove-background' ? 1 : 5;
+        // The same price the estimate card showed: Magnific's cost × 1.54.
+        const creditCost = estimateToolCredits(name, input)?.credits ?? 0;
         const r = await magnificEditImage({ ...input, type: editType }, magnificKey);
         if (r.error || !r.url) return { success: false, error: r.error || 'Magnific image edit failed' };
         // Provider links expire; the chat and library get the object-storage copy.
@@ -1095,7 +1099,8 @@ export function registerAIChatRoutes({
         const magnificKey = await getMagnificApiKey(pool as any);
         if (!magnificKey) return { success: false, error: 'Magnific API key is not configured in Admin → Magnific AI.' };
         const modelKey = input?.model && MAGNIFIC_VIDEO_MODELS[input.model] ? input.model : (input?.image_url ? 'kling-v2-6-pro' : 'ltx-2-pro');
-        const creditCost = MAGNIFIC_VIDEO_MODELS[modelKey]?.credits ?? 25;
+        // The same price the estimate card showed: Magnific's cost × 1.54.
+        const creditCost = estimateToolCredits(name, input)?.credits ?? 0;
         const r = await magnificGenerateVideo({ ...input, model: modelKey }, magnificKey);
         if (r.error || !r.url) return { success: false, error: r.error || 'Magnific video generation failed' };
         // Provider links expire; the chat and library get the object-storage copy.
@@ -1113,7 +1118,8 @@ export function registerAIChatRoutes({
       case 'magnific_lip_sync': {
         const magnificKey = await getMagnificApiKey(pool as any);
         if (!magnificKey) return { success: false, error: 'Magnific API key is not configured in Admin → Magnific AI.' };
-        const creditCost = 30;
+        // The same price the estimate card showed: Magnific's cost × 1.54.
+        const creditCost = estimateToolCredits(name, input)?.credits ?? 0;
         const r = await magnificLipSync(
           {
             image_url: String(input?.image_url || ''),
@@ -1141,7 +1147,8 @@ export function registerAIChatRoutes({
         const magnificKey = await getMagnificApiKey(pool as any);
         if (!magnificKey) return { success: false, error: 'Magnific API key is not configured in Admin → Magnific AI.' };
         const audioType = input?.type || 'sound-effects';
-        const creditCost = audioType === 'music-generation' ? 6 : 4;
+        // The same price the estimate card showed: Magnific's cost × 1.54.
+        const creditCost = estimateToolCredits(name, input)?.credits ?? 0;
         const r = await magnificGenerateAudio(
           {
             type: audioType,
@@ -1202,10 +1209,13 @@ export function registerAIChatRoutes({
       if (!auth) return;
       role = auth.role;
 
-      const { messages, page } = req.body as {
+      const { messages, page, timezone } = req.body as {
         messages: Array<{ role: 'user' | 'assistant'; content: string }>;
         page?: string;
+        /** The browser's IANA timezone, so posts are scheduled in the user's local time. */
+        timezone?: string;
       };
+      const userTz = validTimeZone(timezone);
 
       if (!Array.isArray(messages) || messages.length === 0) {
         return res.status(400).json({ success: false, error: 'messages array is required' });
@@ -1287,7 +1297,15 @@ export function registerAIChatRoutes({
         const decision = toolGuard.check(name, args);
         if (!decision.allow) throw new Error(decision.reason);
         // Anything that spends credits is priced and parked; the user runs it from the estimate card.
+        // Posts are scheduled in the user's own timezone.
+        if (name === 'create_posts_batch' && args && typeof args === 'object') args = { ...args, timezone: userTz };
         const estimate = estimateToolCredits(name, args);
+        if (estimate && name === 'magnific_space_or_flow') {
+          // A Space is priced node by node from its own plan.
+          const key = await getMagnificApiKey(pool as any).catch(() => null);
+          const sim = key ? await magnificExecuteSpaceOrFlow({ ...args, action: 'simulate_cost' }, key).catch(() => null) : null;
+          if (sim?.estimated_credits) { estimate.credits = sim.estimated_credits; estimate.lines = [`Estimated from the Space's steps: ${sim.estimated_credits} credits`]; }
+        }
         if (estimate) {
           const actionId = await createPendingAction(dbQuery, auth.userId, name, args, estimate);
           const balance = await ensureCreditAccount(auth.userId).then((a: any) => Number(a?.credits ?? 0)).catch(() => null);
@@ -1310,7 +1328,9 @@ export function registerAIChatRoutes({
         UNTRUSTED_RULE,
       ].join('\n\n');
       // The user's custom instructions lead the turn's context: they apply to every task.
-      let dynamicPrompt = [customInstructionsBlock(customInstructions), userMemoryBlock, saasContext ? fence('workspace data', saasContext, 8000) : '', skillsPrompt].filter(Boolean).join('\n\n');
+      const localNow = new Intl.DateTimeFormat('en-GB', { timeZone: userTz, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date());
+      const timeBlock = `## TIME AND SCHEDULING\nThe user's timezone: ${userTz}. Their local time now: ${localNow}.\nEvery post is SCHEDULED (never left as a draft) unless the user says otherwise. Pick each post's day and time yourself for the best reach; give scheduled_at as ISO 8601 with the user's UTC offset.\n${bestTimesGuide(userTz)}`;
+      let dynamicPrompt = [customInstructionsBlock(customInstructions), timeBlock, userMemoryBlock, saasContext ? fence('workspace data', saasContext, 8000) : '', skillsPrompt].filter(Boolean).join('\n\n');
       const history = fitHistory(messages.slice(-16).map((m) => ({ role: m.role === 'assistant' ? 'assistant' as const : 'user' as const, content: String(m.content || '') })));
 
       // Streamed text is checked as it accumulates: once the canary from the
@@ -1708,8 +1728,8 @@ export function registerAIChatRoutes({
     /** One image: Magnific (charged) when configured, else the free NVIDIA model (not charged). Null when neither can draw. */
     const drawImage = async (prompt: string, aspect: string, refs: string[]): Promise<{ url: string; charged: number } | null> => {
       if (magnificKey) {
-        const r = await magnificGenerateImage(SOCIAL_IMAGE_MODEL, prompt, aspect, magnificKey, undefined, refs.length ? { reference_images: refs.slice(0, 3) } : undefined);
-        if (r.url) return { url: await durableMediaUrl(r.url, userId), charged: IMAGE_CREDITS };
+        const r = await magnificGenerateImage(SOCIAL_IMAGE_MODEL, prompt, aspect, magnificKey, undefined, { ...SOCIAL_IMAGE_OPTS, ...(refs.length ? { reference_images: refs.slice(0, 3) } : {}) });
+        if (r.url) return { url: await durableMediaUrl(r.url, userId), charged: socialImageCredits() };
         logger.warn({ err: r.error }, 'chat_batch_image_failed');
       }
       if (getMediaStorage()) {
@@ -1726,7 +1746,7 @@ export function registerAIChatRoutes({
         const item = briefs[index];
         const platformName = PLATFORM_LABEL[item.platform];
         try {
-          if (await balance() < SOCIAL_COPY_CREDITS) {
+          if (await balance() < socialCopyCredits()) {
             snap.stopped = 'You ran out of credits. Top up, then press "Write the rest" to finish.';
             await setItem(index, { status: 'failed', error: 'Not made — out of credits' });
             snap.failed++;
@@ -1759,12 +1779,12 @@ export function registerAIChatRoutes({
           const id = randomUUID();
           await dbQuery(
             `INSERT INTO blog_posts (id, user_id, title, slug, content, excerpt, status, scheduled_at, post_format, social_platform, source, created_at, updated_at)
-             VALUES ($1,$2,$3,$4,$5,$6,'scheduled',$7,$8,$9,'chat',NOW(),NOW())`,
-            [id, userId, title, `${slugify(title) || 'post'}-${id.slice(0, 6)}`, text, piece.caption.slice(0, 300), item.scheduled_at, item.format, item.platform],
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'chat',NOW(),NOW())`,
+            [id, userId, title, `${slugify(title) || 'post'}-${id.slice(0, 6)}`, text, piece.caption.slice(0, 300), item.as_draft ? 'draft' : 'scheduled', item.as_draft ? null : item.scheduled_at, item.format, item.platform],
           );
-          await charge(SOCIAL_COPY_CREDITS, 'chat_post_copy', { post_id: id });
+          await charge(socialCopyCredits(), 'chat_post_copy', { post_id: id });
           const post: any = {
-            id, title, content: text, scheduled_at: item.scheduled_at, status: 'scheduled',
+            id, title, content: text, scheduled_at: item.as_draft ? null : item.scheduled_at, status: item.as_draft ? 'draft' : 'scheduled',
             social_platform: item.platform, post_format: item.format, media_assets: [] as any[], featured_image: '', slides: piece.slides,
           };
           const notes: string[] = [];
@@ -1782,7 +1802,7 @@ export function registerAIChatRoutes({
               ? [[piece.image_prompt || item.topic, item.visual, isVideoFormat(item.format) ? 'Vertical cover frame for a short video.' : ''].filter(Boolean).join('. ')]
               : [];
           for (let k = 0; k < prompts.length; k++) {
-            if (magnificKey && await balance() < IMAGE_CREDITS) { notes.push('Ran out of credits before every image was made.'); break; }
+            if (magnificKey && await balance() < socialImageCredits()) { notes.push('Ran out of credits before every image was made.'); break; }
             await setItem(index, { status: 'media', progress: prompts.length > 1 ? `Image ${k + 1} of ${prompts.length}` : 'Creating the image', post: { ...post } });
             const refs = item.format === 'carousel' && post.media_assets[0]?.url ? [post.media_assets[0].url] : [];
             const img = await drawImage(prompts[k], aspect, refs).catch(() => null);
@@ -1800,8 +1820,8 @@ export function registerAIChatRoutes({
               notes.push('Video needs Magnific (Admin → Magnific AI); the cover image is saved — add a video before it publishes.');
             } else if (!post.featured_image) {
               notes.push('The video was skipped because its cover image could not be made.');
-            } else if (await balance() < VIDEO_CREDITS) {
-              notes.push(`Not enough credits for the video (${VIDEO_CREDITS}); the cover image is saved.`);
+            } else if (await balance() < socialVideoCredits()) {
+              notes.push(`Not enough credits for the video (${socialVideoCredits()}); the cover image is saved.`);
             } else {
               await setItem(index, { status: 'media', progress: 'Creating the video (this takes a few minutes)', post: { ...post } });
               const v = await magnificGenerateVideo({
@@ -1813,8 +1833,8 @@ export function registerAIChatRoutes({
                 // The video leads: platforms take the first media item as the post.
                 post.media_assets = [{ url: post.video_url, type: 'video' }];
                 await saveMedia();
-                await charge(VIDEO_CREDITS, 'chat_post_video', { post_id: id });
-                await setItem(index, { post: { ...post } }, VIDEO_CREDITS);
+                await charge(socialVideoCredits(), 'chat_post_video', { post_id: id });
+                await setItem(index, { post: { ...post } }, socialVideoCredits());
               } else {
                 logger.warn({ err: v?.error }, 'chat_batch_video_failed');
                 notes.push('The video could not be made (not charged); the cover image is saved.');
@@ -1824,7 +1844,7 @@ export function registerAIChatRoutes({
 
           await preselectPlatformsForPost(id, userId, [item.platform]).catch(() => undefined);
           snap.done++;
-          await setItem(index, { status: 'done', progress: undefined, post: { ...post, content: text.slice(0, 2200) }, note: notes.join(' ') || undefined }, SOCIAL_COPY_CREDITS);
+          await setItem(index, { status: 'done', progress: undefined, post: { ...post, content: text.slice(0, 2200) }, note: notes.join(' ') || undefined }, socialCopyCredits());
         } catch (err) {
           snap.failed++;
           logger.warn({ err: aiErrorDetail(err), userId, index }, 'chat_batch_post_failed');
@@ -1928,7 +1948,7 @@ export function registerAIChatRoutes({
     const account: any = await ensureCreditAccount(auth.userId).catch(() => null);
     const balance = Number(account?.credits ?? 0);
     // A batch can do part of the job on a smaller balance; a single generation needs the full amount.
-    const needed = action.tool === 'create_posts_batch' ? BATCH_POST_CREDITS : action.credits;
+    const needed = action.tool === 'create_posts_batch' ? socialCopyCredits() : action.credits;
     if (balance < needed || account?.spendingBlocked) {
       // Back to pending: the same card works again after a top-up.
       await dbQuery(`UPDATE chat_pending_actions SET status='pending', updated_at=NOW() WHERE id=$1`, [action.id]).catch(() => undefined);
@@ -1962,7 +1982,7 @@ export function registerAIChatRoutes({
       || (a.status === 'done' && snap?.kind === 'batch' && snap.failed > 0);
     if (!resumable) return res.status(409).json({ success: false, code: 'not_resumable', error: 'There is nothing left to finish here.' });
     const account: any = await ensureCreditAccount(auth.userId).catch(() => null);
-    const needed = a.tool === 'create_posts_batch' ? BATCH_POST_CREDITS : a.credits;
+    const needed = a.tool === 'create_posts_batch' ? socialCopyCredits() : a.credits;
     if (Number(account?.credits ?? 0) < needed || account?.spendingBlocked) {
       return res.status(402).json({ success: false, code: 'insufficient_credits', needed, balance: Number(account?.credits ?? 0), error: `You need at least ${needed} credits to continue. Top up, then try again.` });
     }

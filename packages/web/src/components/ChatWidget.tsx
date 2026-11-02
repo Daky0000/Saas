@@ -1414,7 +1414,7 @@ export default function ChatWidget() {
       const res = await fetch(`${getApiBaseUrl()}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ messages: history, page: window.location.pathname }),
+        body: JSON.stringify({ messages: history, page: window.location.pathname, timezone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } })() }),
         signal: ctrl.signal,
       });
 

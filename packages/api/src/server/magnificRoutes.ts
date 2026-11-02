@@ -1,4 +1,5 @@
 import express from 'express';
+import { creditsForMagnific, magnificAudioCost, magnificEditCost, magnificImageCost, magnificLipSyncCost, magnificOneCost, magnificVideoCost } from './aiPricing.ts';
 import type { Router, Response } from 'express';
 import type { Request } from '../types/http.ts';
 import { randomUUID } from 'crypto';
@@ -329,6 +330,15 @@ export interface MagnificOneOptions {
   tiles?: 8 | 16;
   reference_images?: string[];
   webhook_url?: string;
+}
+
+// `.credits` on the model tables is what a default call costs the customer,
+// derived from Magnific's real price × 1.54 (server/aiPricing.ts).
+for (const key of Object.keys(MAGNIFIC_IMAGE_MODELS)) {
+  Object.defineProperty(MAGNIFIC_IMAGE_MODELS[key], 'credits', { get: () => creditsForMagnific(magnificImageCost(key)), enumerable: true, configurable: true });
+}
+for (const key of Object.keys(MAGNIFIC_VIDEO_MODELS)) {
+  Object.defineProperty(MAGNIFIC_VIDEO_MODELS[key], 'credits', { get: () => creditsForMagnific(magnificVideoCost(key)), enumerable: true, configurable: true });
 }
 
 /**
@@ -955,13 +965,14 @@ export async function magnificExecuteSpaceOrFlow(
 
   // Cost simulation (free pre-flight estimation)
   const estimateNodeCredits = (n: MagnificSpaceNode): number => {
-    if (n.type === 'magnific-one') return n.params?.mode === 'draft' ? 4 : (n.params?.resolution === '4k' ? 8 : 6);
-    if (n.type === 'image') return MAGNIFIC_IMAGE_MODELS[n.params?.model || 'magnific-one']?.credits ?? 5;
-    if (n.type === 'edit') return n.params?.type === 'remove-background' ? 1 : 5;
-    if (n.type === 'video') return MAGNIFIC_VIDEO_MODELS[n.params?.model || 'kling-v2-6-pro']?.credits ?? 25;
-    if (n.type === 'lip-sync') return 30;
-    if (n.type === 'audio') return 5;
-    return 5;
+    // Platform credits from Magnific's real cost × 1.54 (server/aiPricing.ts).
+    if (n.type === 'magnific-one') return creditsForMagnific(magnificOneCost(n.params ?? {}));
+    if (n.type === 'image') return creditsForMagnific(magnificImageCost(n.params?.model || 'magnific-one', n.params ?? {}));
+    if (n.type === 'edit') return creditsForMagnific(magnificEditCost(n.params?.type || 'upscale', n.params?.scale_factor));
+    if (n.type === 'video') return creditsForMagnific(magnificVideoCost(n.params?.model || 'kling-v2-6-pro', n.params ?? {}));
+    if (n.type === 'lip-sync') return creditsForMagnific(magnificLipSyncCost());
+    if (n.type === 'audio') return creditsForMagnific(magnificAudioCost(n.params?.type || 'sound-effects', n.params?.duration_seconds));
+    return creditsForMagnific(200);
   };
   const estimatedCredits = defaultNodes.reduce((sum, n) => sum + estimateNodeCredits(n), 0);
 
@@ -1443,7 +1454,7 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
     const { prompt, mode, quality, resolution, aspect_ratio, tiles, reference_images, webhook_url } = req.body as MagnificOneOptions;
     if (!prompt?.trim()) return res.status(400).json({ error: 'prompt is required' });
 
-    const creditCost = mode === 'draft' ? 4 : (resolution === '4k' ? 8 : 6);
+    const creditCost = creditsForMagnific(magnificOneCost({ mode, quality, resolution }));
     const credRow = await pool!.query<{ credits: number }>('SELECT credits FROM user_credits WHERE user_id = $1', [auth.userId]).catch(() => ({ rows: [] as { credits: number }[] }));
     const currentCredits = credRow.rows[0]?.credits ?? 0;
     if (currentCredits < creditCost) {
@@ -1504,7 +1515,7 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
     if (!prompt?.trim()) return res.status(400).json({ error: 'prompt is required' });
 
     const modelKey = MAGNIFIC_IMAGE_MODELS[model] ? model : 'magnific-one';
-    const creditCost = MAGNIFIC_IMAGE_MODELS[modelKey]?.credits ?? 5;
+    const creditCost = creditsForMagnific(magnificImageCost(modelKey, req.body ?? {}));
 
     const credRow = await pool!.query<{ credits: number }>('SELECT credits FROM user_credits WHERE user_id = $1', [auth.userId]).catch(() => ({ rows: [] as { credits: number }[] }));
     const currentCredits = credRow.rows[0]?.credits ?? 0;
@@ -1570,16 +1581,7 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
     const { type } = body;
     if (!type) return res.status(400).json({ error: 'type is required' });
 
-    const editCreditCosts: Record<string, number> = {
-      'upscale': 5,
-      'upscale-precision': 5,
-      'relight': 4,
-      'style-transfer': 5,
-      'remove-background': 1,
-      'image-expand': 5,
-      'seedream-edit': 5,
-    };
-    const creditCost = editCreditCosts[type] ?? 5;
+    const creditCost = creditsForMagnific(magnificEditCost(type, (req.body as any)?.scale_factor));
 
     const credRow = await pool!.query<{ credits: number }>(
       'SELECT credits FROM user_credits WHERE user_id = $1', [auth.userId]
@@ -1635,7 +1637,7 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
     }
 
     const modelKey = opts.model && MAGNIFIC_VIDEO_MODELS[opts.model] ? opts.model : (opts.image_url ? 'kling-v2-6-pro' : 'ltx-2-pro');
-    const creditCost = MAGNIFIC_VIDEO_MODELS[modelKey]?.credits ?? 25;
+    const creditCost = creditsForMagnific(magnificVideoCost(modelKey, opts as any));
 
     const credRow = await pool!.query<{ credits: number }>('SELECT credits FROM user_credits WHERE user_id = $1', [auth.userId]).catch(() => ({ rows: [] as { credits: number }[] }));
     const currentCredits = credRow.rows[0]?.credits ?? 0;
@@ -1695,7 +1697,7 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
       return res.status(400).json({ error: 'image_url and audio_url are required for OmniHuman 1.5 lip-sync' });
     }
 
-    const creditCost = 30;
+    const creditCost = creditsForMagnific(magnificLipSyncCost());
     const credRow = await pool!.query<{ credits: number }>('SELECT credits FROM user_credits WHERE user_id = $1', [auth.userId]).catch(() => ({ rows: [] as { credits: number }[] }));
     const currentCredits = credRow.rows[0]?.credits ?? 0;
     if (currentCredits < creditCost) {
@@ -1752,7 +1754,7 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
     const opts = req.body as MagnificAudioOptions;
     if (!opts.type) return res.status(400).json({ error: 'type (sound-effects, music-generation, or audio-isolation) is required' });
 
-    const creditCost = opts.type === 'music' || opts.type === 'music-generation' ? 6 : opts.type === 'audio-isolation' || opts.type === 'isolate' ? 5 : 4;
+    const creditCost = creditsForMagnific(magnificAudioCost(String(opts.type), (opts as any).duration_seconds));
     const credRow = await pool!.query<{ credits: number }>('SELECT credits FROM user_credits WHERE user_id = $1', [auth.userId]).catch(() => ({ rows: [] as { credits: number }[] }));
     const currentCredits = credRow.rows[0]?.credits ?? 0;
     if (currentCredits < creditCost) {

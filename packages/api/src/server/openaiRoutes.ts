@@ -1,4 +1,5 @@
 import express from 'express';
+import { OPENAI_TTS_USD_PER_1K_CHARS, creditsForUsd } from './aiPricing.ts';
 import { chargeAICredits, ensureCreditAccount } from '../ai-helpers.ts';
 import type { Router, Response } from 'express';
 import type { Request } from '../types/http.ts';
@@ -30,6 +31,11 @@ export const OPENAI_IMAGE_MODELS: Record<string, { credits: number; providerCost
   'gpt-image-2.5-sunburst': { credits: 12, providerCostUsd: 0.129, returnFormat: 'b64' },
 };
 
+// `.credits` follows the provider cost × 1.54 (server/aiPricing.ts).
+for (const m of Object.values(OPENAI_IMAGE_MODELS)) {
+  Object.defineProperty(m, 'credits', { get: () => creditsForUsd(m.providerCostUsd), enumerable: true, configurable: true });
+}
+
 export const DEFAULT_OPENAI_IMAGE_MODEL = 'gpt-image-2.5-flare';
 
 // Shut down (dall-e-2, dall-e-3: 2026-05-12; gpt-image-1: 2026-10-23) or
@@ -50,7 +56,8 @@ export function openaiImageSizeForAspect(aspect: string): string {
   }
 }
 
-const OPENAI_TTS_CREDITS: Record<string, number> = { 'gpt-4o-mini-tts': 3, 'tts-1': 2, 'tts-1-hd': 4 };
+/** Minimum charge per speech request; the real charge follows the text length (OPENAI_TTS_USD_PER_1K_CHARS). */
+const OPENAI_TTS_CREDITS: Record<string, number> = { 'gpt-4o-mini-tts': 1, 'tts-1': 1, 'tts-1-hd': 1 };
 
 export function registerOpenAIRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, pool }: OpenAIDeps): Router {
   const router = express.Router();
@@ -169,16 +176,18 @@ export function registerOpenAIRoutes({ requireAuth, requireAdmin, hasDatabase, d
     if (!apiKey) return res.status(503).json({ error: 'OpenAI API not configured' });
 
     // Support admin-configurable rate card override in platform_configs('openai') so prices are never hard-coded indefinitely
-    let creditCost = cfg.credits;
     let providerCostUsd = cfg.providerCostUsd;
+    let adminCredits = 0;
     try {
       const cfgRow = await dbQuery<{ config: Record<string, string> }>('SELECT config FROM platform_configs WHERE platform=$1', ['openai']);
       const dec = decryptPlatformConfig(cfgRow.rows[0]?.config);
       const customCredits = Number(dec?.[`credits_${model}`]);
       const customUsd = Number(dec?.[`cost_usd_${model}`]);
-      if (Number.isFinite(customCredits) && customCredits > 0) creditCost = Math.round(customCredits);
+      if (Number.isFinite(customCredits) && customCredits > 0) adminCredits = Math.round(customCredits);
       if (Number.isFinite(customUsd) && customUsd >= 0) providerCostUsd = customUsd;
     } catch { /* fallback to default rate card */ }
+    // Never below cost × 1.54: an admin price can raise it, not undercut it.
+    const creditCost = Math.max(creditsForUsd(providerCostUsd), adminCredits);
 
     const creditAcc = await ensureCreditAccount(auth.userId).catch(() => ({ credits: 0 }));
     const currentCredits = typeof creditAcc === 'number' ? creditAcc : creditAcc.credits;
@@ -252,7 +261,8 @@ export function registerOpenAIRoutes({ requireAuth, requireAdmin, hasDatabase, d
     const apiKey = await getOpenAIApiKey();
     if (!apiKey) return res.status(503).json({ error: 'OpenAI API not configured' });
 
-    const creditCost = OPENAI_TTS_CREDITS[model] ?? 3;
+    // Billed per character: cost × 1.54 (server/aiPricing.ts).
+    const creditCost = Math.max(OPENAI_TTS_CREDITS[model] ?? 1, creditsForUsd((text.trim().length / 1000) * (OPENAI_TTS_USD_PER_1K_CHARS[model] ?? 0.03)));
     const creditAcc = await ensureCreditAccount(auth.userId).catch(() => ({ credits: 0 }));
     const currentCredits = typeof creditAcc === 'number' ? creditAcc : creditAcc.credits;
     if (currentCredits < creditCost) {

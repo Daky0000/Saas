@@ -21,6 +21,7 @@ import {
   refreshModelRegistryOverrides,
 } from '../src/server/autopilot/creativeBriefAndRouter.ts';
 import { OPENAI_IMAGE_MODELS, openaiImageSizeForAspect } from '../src/server/openaiRoutes.ts';
+import { creditsForUsd } from '../src/server/aiPricing.ts';
 import { buildAutopilotVisualAdapter, classifyProviderHttpError, decodeStrictBase64 } from '../src/server/autopilot/autopilotProviderBridge.ts';
 import { inspectMedia, MediaValidationError } from '../src/server/autopilot/mediaInspection.ts';
 import { createMemoryStorageDriver, createS3Driver, signDeliveryToken, verifyDeliveryToken } from '../src/server/autopilot/assetStorage.ts';
@@ -444,7 +445,8 @@ test('P0-4: retryable definitive failures retry within the ceiling; provider suc
   };
   const ok = await executeAutopilotWorkflow({ repo, tenantId: T, actorUserId: U, actorRole: 'owner', itemId: (await seed(repo)).id, accounting, retryDelayMs: 0, maxProviderRetries: 2, assets: { storage, verifyDelivery: async () => {} }, visualAdapter: flaky });
   assert.equal(calls, 3);
-  assert.equal(ok.accounting?.settled_credits, 12, 'one delivered image, charged once');
+  // The image model's provider cost × 1.54, in credits (server/aiPricing.ts).
+  assert.equal(ok.accounting?.settled_credits, creditsForUsd(0.129), 'one delivered image, charged once');
   assert.equal(ok.accounting?.cost_status, 'actual', 'usage was reported');
 
   calls = 0;

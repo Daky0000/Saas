@@ -7,6 +7,7 @@ import { pool, dbQuery, hasDatabase } from './db.ts';
 import { logger } from './logger.ts';
 import { randomUUID, createHash } from 'crypto';
 import { FREE_MODELS, NvidiaError, getNvidiaConfig, jobForModel, nvidiaChat } from './server/nvidiaModels.ts';
+import { PROFIT_MULTIPLIER, creditsForUsd } from './server/aiPricing.ts';
 import { UNTRUSTED_RULE, checkOutput, scanForInjection } from './server/aiGuard.ts';
 import { startSpan } from './server/aiTrace.ts';
 import { classifyTask, routePaidModel, routingMode } from './server/aiRouting.ts';
@@ -142,8 +143,10 @@ export function resolveTextKey(config: { provider: 'anthropic' | 'google'; encry
 // Credit economics & Monetization Top-Up Packs
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const CREDIT_USD = 0.01;          // retail value of one credit
-export const AI_PROFIT_MULTIPLIER = 3;   // retail = 3× raw provider cost
+/** Nominal retail value of one credit (display only). Charges use the cheapest pack's real value — see server/aiPricing.ts. */
+export const CREDIT_USD = 0.01;
+/** Every AI cost is charged at 1.54× what the provider bills us. */
+export const AI_PROFIT_MULTIPLIER = PROFIT_MULTIPLIER;
 
 export const MODEL_COSTS: Record<string, { in: number; out: number; cacheRead?: number }> = {
   'claude-opus-5-5':           { in: 4,    out: 20,   cacheRead: 0.2 },
@@ -175,8 +178,7 @@ export function computeAICostUsd(model: string, inputTokens: number, outputToken
 }
 
 export function creditsForCostUsd(costUsd: number): number {
-  if (costUsd <= 0) return 0;
-  return Math.max(1, Math.ceil((costUsd * AI_PROFIT_MULTIPLIER) / CREDIT_USD));
+  return creditsForUsd(costUsd);
 }
 
 
