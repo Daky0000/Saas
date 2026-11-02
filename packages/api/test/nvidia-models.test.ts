@@ -258,3 +258,25 @@ test('nvidia discovery: ladders are built from models that answer (agents must c
   assert.deepEqual(nv.liveLadder(saved, 'text'), ['deepseek-ai/deepseek-v4.1-flash', 'z-ai/glm-5.3-flash']);
   nv.resetModelHealthForTests();
 });
+
+test('agent loop: reports each model it asks, why it moved on, and the model reasoning', async () => {
+  const replies = [
+    json(504, { detail: 'timeout' }),
+    json(200, { choices: [{ message: { content: 'Done.', reasoning_content: 'The user wants a summary.' } }] }),
+  ];
+  const fetchImpl = (async () => replies.shift()!) as any;
+  const models: Array<[string, string | undefined]> = [];
+  const thoughts: string[] = [];
+  const r = await nv.nvidiaAgentLoop({
+    system: 's', history: [{ role: 'user', content: 'sum up' }], tools: [],
+    executeTool: async () => ({}), config: config(), fetchImpl,
+    onModel: (_id, name, previousError) => models.push([name, previousError]),
+    onReasoning: (t) => thoughts.push(t),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(models.length, 2);
+  assert.equal(models[0][0], nv.modelName(nv.DEFAULT_LADDERS.agent[0]));
+  assert.equal(models[0][1], undefined);
+  assert.match(String(models[1][1]), /504/);
+  assert.deepEqual(thoughts, ['The user wants a summary.']);
+});

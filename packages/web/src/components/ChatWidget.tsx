@@ -3,12 +3,15 @@ import {
   BarChart2,
   Calendar,
   CheckCircle,
+  ChevronDown,
   Clock,
   Edit2,
   ExternalLink,
   Mic,
   MicOff,
+  Loader2,
   Paperclip,
+  RotateCcw,
   Send,
   Settings,
   Sparkles,
@@ -27,6 +30,22 @@ type TextMessage = {
   role: 'user' | 'assistant';
   content: string;
   images?: AttachedImg[];
+  /** The text as typed (user messages), so a failed turn can be sent again. */
+  raw?: string;
+  /** The reply failed; the bubble shows the error and a Retry button. */
+  failed?: boolean;
+};
+/** What the assistant is doing this turn: steps, thinking, posts made. */
+type ActivityMessage = {
+  kind: 'activity';
+  id: string;
+  status: 'working' | 'done' | 'failed';
+  steps: string[];
+  thinking: string;
+  startedAt: number;
+  endedAt?: number;
+  postsDone: number;
+  postsTotal?: number;
 };
 type ToolMessage = {
   kind: 'tool';
@@ -74,7 +93,22 @@ type PlanMessage = {
   status: 'pending' | 'executing' | 'done';
   agentStatuses?: Record<string, { running: boolean; analysis: string }>;
 };
-type Message = TextMessage | ToolMessage | FormMessage | SchedulerMessage | PlanMessage;
+type Message = TextMessage | ToolMessage | FormMessage | SchedulerMessage | PlanMessage | ActivityMessage;
+
+const NUMBER_WORDS: Record<string, number> = {
+  two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, fifteen: 15, twenty: 20, thirty: 30,
+};
+
+/** "Write 5 LinkedIn posts" → 5: how many posts the person asked for, when they said. */
+export function requestedPostCount(text: string): number | undefined {
+  const m = text.toLowerCase().match(/\b(\d{1,2}|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty)\s+(?:[a-z-]+\s+){0,3}?(?:posts?|drafts?|captions?|tweets?|threads?)\b/);
+  if (!m) return undefined;
+  const n = /^\d+$/.test(m[1]) ? Number(m[1]) : NUMBER_WORDS[m[1]];
+  return n && n > 1 && n <= 60 ? n : undefined;
+}
+
+const POST_TOOLS = new Set(['create_draft', 'schedule_post']);
 
 // ── Form parsing ─────────────────────────────────────────────────────────────
 
@@ -571,6 +605,78 @@ function PostDraftedCard({ title, multiple }: { title?: string; multiple?: boole
 
 // ── Tool card ─────────────────────────────────────────────────────────────────
 
+function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+}
+
+function ActivityCard({ msg }: { msg: ActivityMessage }) {
+  const [open, setOpen] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (msg.status !== 'working') return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [msg.status]);
+
+  const elapsed = fmtElapsed((msg.endedAt ?? now) - msg.startedAt);
+  const current = msg.steps[msg.steps.length - 1] ?? 'Starting';
+  const working = msg.status === 'working';
+  const hasDetail = msg.steps.length > 1 || Boolean(msg.thinking);
+  const postLine = msg.postsTotal
+    ? `${Math.min(msg.postsDone, msg.postsTotal)} of ${msg.postsTotal} posts`
+    : msg.postsDone > 0 ? `${msg.postsDone} post${msg.postsDone === 1 ? '' : 's'} saved` : '';
+
+  return (
+    <div className={`rounded-xl border px-3 py-2 text-xs ${msg.status === 'failed' ? 'border-red-100 bg-red-50/60' : 'border-slate-200 bg-white'}`}>
+      <button type="button" onClick={() => hasDetail && setOpen((o) => !o)} className="flex w-full items-center gap-2 text-left" aria-expanded={open}>
+        {working
+          ? <Loader2 size={13} className="shrink-0 animate-spin text-indigo-500" />
+          : msg.status === 'failed'
+            ? <X size={13} className="shrink-0 text-red-500" />
+            : <CheckCircle size={13} className="shrink-0 text-emerald-500" />}
+        <span className={`min-w-0 flex-1 truncate ${working ? 'text-slate-700' : msg.status === 'failed' ? 'text-red-600' : 'text-slate-500'}`}>
+          {working ? `${current}…` : msg.status === 'failed' ? `Stopped after ${elapsed}` : `Worked for ${elapsed}${postLine ? ` · ${postLine}` : ''}`}
+        </span>
+        {working && <span className="shrink-0 tabular-nums text-slate-400">{elapsed}</span>}
+        {hasDetail && <ChevronDown size={13} className={`shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />}
+      </button>
+
+      {working && postLine && (
+        <div className="mt-2">
+          <div className="mb-1 flex justify-between text-[10.5px] text-slate-500"><span>Posts</span><span className="tabular-nums">{postLine}</span></div>
+          {msg.postsTotal && (
+            <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+              <div className="h-full rounded-full bg-indigo-500 transition-all duration-500" style={{ width: `${Math.min(100, (msg.postsDone / msg.postsTotal) * 100)}%` }} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {open && hasDetail && (
+        <div className="mt-2 space-y-1.5 border-t border-slate-100 pt-2">
+          <ol className="space-y-1">
+            {msg.steps.map((step, i) => {
+              const live = working && i === msg.steps.length - 1;
+              return (
+                <li key={`${i}-${step}`} className="flex items-start gap-1.5 text-[11px] text-slate-600">
+                  {live ? <Loader2 size={11} className="mt-0.5 shrink-0 animate-spin text-indigo-400" /> : <CheckCircle size={11} className="mt-0.5 shrink-0 text-slate-300" />}
+                  <span>{step}</span>
+                </li>
+              );
+            })}
+          </ol>
+          {msg.thinking && (
+            <div className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 px-2 py-1.5 text-[11px] italic leading-relaxed text-slate-500">
+              {msg.thinking}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ToolCard({ msg }: { msg: ToolMessage }) {
   if (msg.status === 'running') {
     return (
@@ -808,13 +914,15 @@ export default function ChatWidget() {
 
   // ── Send ──────────────────────────────────────────────────────────────────
 
-  const send = useCallback(async (textOverride?: string, imgsOverride?: AttachedImg[]) => {
+  const send = useCallback(async (textOverride?: string, imgsOverride?: AttachedImg[], base?: Message[]) => {
     const rawText = (textOverride ?? input).trim();
     const imgs = imgsOverride ?? attachedImages;
+    // A retry sends from the conversation as it was before the failed turn.
+    const prior = base ?? messages;
 
     // Client-side intercept: if user manually types "schedule it/the post" and there's a draft, show scheduler
     if (/^schedule\b/i.test(rawText) && !imgsOverride) {
-      const lastDraft = [...messages].reverse().find(
+      const lastDraft = [...prior].reverse().find(
         (m): m is ToolMessage => m.kind === 'tool' && m.name === 'create_draft' && (m.status === 'done' || m.status === 'error'),
       );
       if (lastDraft) {
@@ -843,10 +951,20 @@ export default function ChatWidget() {
       role: 'user',
       content: rawText || `[Attached: ${imgs.map((i) => i.name).join(', ')}]`,
       images: imgs.length > 0 ? imgs : undefined,
+      raw: rawText,
     };
     const assistantId = crypto.randomUUID();
+    const activityId = `activity-${assistantId}`;
+    const activity: ActivityMessage = {
+      kind: 'activity', id: activityId, status: 'working', steps: ['Understanding your request'], thinking: '',
+      startedAt: Date.now(), postsDone: 0, postsTotal: requestedPostCount(rawText),
+    };
+    const updateActivity = (fn: (a: ActivityMessage) => ActivityMessage) =>
+      setMessages((prev) => prev.map((m) => (m.id === activityId && m.kind === 'activity' ? fn(m) : m)));
+    const addStep = (step: string) =>
+      updateActivity((a) => (a.steps[a.steps.length - 1] === step ? a : { ...a, steps: [...a.steps, step].slice(-30) }));
 
-    setMessages((prev) => [...prev, userMsg, { kind: 'text', id: assistantId, role: 'assistant', content: '' }]);
+    setMessages([...prior, userMsg, activity, { kind: 'text', id: assistantId, role: 'assistant', content: '' }]);
     setInput('');
     setAttachedImages([]);
     setRecordingState('idle');
@@ -854,7 +972,7 @@ export default function ChatWidget() {
 
     const token = localStorage.getItem('auth_token');
     // Build history with image refs included in content
-    const history = [...messages, { ...userMsg, content: apiText }]
+    const history = [...prior, { ...userMsg, content: apiText }]
       .filter((m): m is TextMessage => m.kind === 'text')
       .map(({ role, content }) => ({ role, content }));
 
@@ -884,7 +1002,7 @@ export default function ChatWidget() {
       if (usePlan) {
         const planAgents: PlanAgent[] = planData.agents.map((a: any) => ({ ...a, enabled: true }));
         setMessages((prev) => [
-          ...prev.filter((m) => !(m.kind === 'text' && m.id === assistantId && m.content === '')),
+          ...prev.filter((m) => m.id !== activityId && !(m.kind === 'text' && m.id === assistantId && m.content === '')),
           { kind: 'plan', id: assistantId, summary: planData.summary || '', agents: planAgents, status: 'pending' } satisfies PlanMessage,
         ]);
         setLoading(false);
@@ -906,6 +1024,8 @@ export default function ChatWidget() {
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let finished = false;
+      addStep('Connecting to the AI');
 
       while (true) {
         const { done, value } = await reader.read();
@@ -918,15 +1038,20 @@ export default function ChatWidget() {
           if (!line.startsWith('data: ')) continue;
           const payload = line.slice(6).trim();
           // The reply has been charged by now; the header badge re-reads the balance.
-          if (payload === '[DONE]') { notifyCreditsChanged(); break; }
+          if (payload === '[DONE]') { finished = true; notifyCreditsChanged(); break; }
           try {
             const ev = JSON.parse(payload) as any;
             if (ev.error) throw new Error(ev.error);
-            if (ev.type === 'text' && ev.text) {
+            if (ev.type === 'status' && ev.text) {
+              addStep(String(ev.text));
+            } else if (ev.type === 'thinking' && ev.text) {
+              updateActivity((a) => ({ ...a, thinking: `${a.thinking ? `${a.thinking}\n\n` : ''}${ev.text}`.slice(-6000) }));
+            } else if (ev.type === 'text' && ev.text) {
               setMessages((prev) =>
                 prev.map((m) => m.id === assistantId && m.kind === 'text' ? { ...m, content: m.content + ev.text } : m),
               );
             } else if (ev.type === 'tool_start') {
+              addStep(String(ev.label || ev.name).replace(/…$/, ''));
               const toolId = `tool-${ev.name}-${Date.now()}`;
               setMessages((prev) => [
                 ...prev.filter((m) => !(m.kind === 'text' && m.id === assistantId && m.content === '')),
@@ -934,6 +1059,10 @@ export default function ChatWidget() {
                 { kind: 'text', id: assistantId, role: 'assistant', content: '' },
               ]);
             } else if (ev.type === 'tool_done') {
+              if (ev.success && POST_TOOLS.has(ev.name)) {
+                const made = Array.isArray(ev.result?.posts) ? ev.result.posts.length : 1;
+                updateActivity((a) => ({ ...a, postsDone: a.postsDone + made }));
+              }
               setMessages((prev) =>
                 prev.map((m) =>
                   m.kind === 'tool' && m.name === ev.name && m.status === 'running'
@@ -947,13 +1076,18 @@ export default function ChatWidget() {
           }
         }
       }
+      if (!finished) throw new Error('The connection dropped before the reply finished.');
+      updateActivity((a) => ({ ...a, status: 'done', endedAt: Date.now() }));
     } catch (err: any) {
-      if (err?.name === 'AbortError') return;
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId && m.kind === 'text' ? { ...m, content: err?.message || 'Something went wrong.' } : m,
-        ),
-      );
+      if (err?.name === 'AbortError') { updateActivity((a) => (a.status === 'working' ? { ...a, status: 'done', endedAt: Date.now() } : a)); return; }
+      updateActivity((a) => ({ ...a, status: 'failed', endedAt: Date.now() }));
+      const message = err?.message === 'Failed to fetch' ? 'Could not reach the server.' : err?.message || 'Something went wrong.';
+      setMessages((prev) => {
+        const failed: TextMessage = { kind: 'text', id: assistantId, role: 'assistant', content: message, failed: true };
+        return prev.some((m) => m.id === assistantId)
+          ? prev.map((m) => (m.id === assistantId && m.kind === 'text' ? failed : m))
+          : [...prev, failed];
+      });
     } finally {
       setLoading(false);
       abortRef.current = null;
@@ -961,7 +1095,7 @@ export default function ChatWidget() {
       setTimeout(() => {
         setMessages((prev) => {
           const lastA = [...prev].reverse().find(
-            (m): m is TextMessage => m.kind === 'text' && m.role === 'assistant' && !!m.content,
+            (m): m is TextMessage => m.kind === 'text' && m.role === 'assistant' && !!m.content && !m.failed,
           );
           if (!lastA) return prev;
           const formId = `form-${lastA.id}`;
@@ -987,6 +1121,17 @@ export default function ChatWidget() {
       }, 60);
     }
   }, [input, loading, messages, attachedImages]);
+
+  /** Sends the user message behind a failed reply again, from the conversation as it was before it. */
+  const retry = useCallback((failedId: string) => {
+    if (loading) return;
+    const idx = messages.findIndex((m) => m.id === failedId);
+    let u = idx - 1;
+    while (u >= 0 && !(messages[u].kind === 'text' && (messages[u] as TextMessage).role === 'user')) u--;
+    if (u < 0) return;
+    const original = messages[u] as TextMessage;
+    void send(original.raw ?? original.content, original.images ?? [], messages.slice(0, u));
+  }, [loading, messages, send]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
@@ -1211,7 +1356,9 @@ export default function ChatWidget() {
               <div className="px-3 py-2.5 space-y-2">
                 {messages.map((msg) => (
                   <div key={msg.id}>
-                    {msg.kind === 'tool' ? (
+                    {msg.kind === 'activity' ? (
+                      <div className="pl-8"><ActivityCard msg={msg} /></div>
+                    ) : msg.kind === 'tool' ? (
                       <div className="pl-8"><ToolCard msg={msg} /></div>
                     ) : msg.kind === 'form' ? (
                       <div className="pl-8">
@@ -1237,7 +1384,18 @@ export default function ChatWidget() {
                           onCancel={cancelPlan}
                         />
                       </div>
-                    ) : (
+                    ) : msg.role === 'assistant' && msg.failed ? (
+                      <div className="flex justify-start gap-1.5">
+                        <SparkleAvatar size={22} />
+                        <div className="max-w-[80%] space-y-2 rounded-2xl rounded-bl-sm border border-red-100 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-700">
+                          <p>{msg.content}</p>
+                          <button type="button" disabled={loading} onClick={() => retry(msg.id)}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1 text-[11px] font-semibold text-red-700 shadow-sm ring-1 ring-red-200 hover:bg-red-100 disabled:opacity-50">
+                            <RotateCcw size={11} /> Retry
+                          </button>
+                        </div>
+                      </div>
+                    ) : msg.role === 'assistant' && !msg.content && messages.some((m) => m.kind === 'activity' && m.id === `activity-${msg.id}`) ? null : (
                       <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} gap-1.5`}>
                         {msg.role === 'assistant' && <SparkleAvatar size={22} />}
                         <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-xs leading-relaxed ${
@@ -1265,6 +1423,7 @@ export default function ChatWidget() {
                 ))}
 
                 {loading && messages.length > 0 &&
+                  !messages.some((m) => m.kind === 'activity' && m.status === 'working') &&
                   messages[messages.length - 1]?.kind === 'text' &&
                   (messages[messages.length - 1] as TextMessage).content === '' && (
                     <div className="flex items-start gap-1.5">

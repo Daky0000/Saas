@@ -168,6 +168,17 @@ function assistantText(message: any): string {
   return '';
 }
 
+/** The display name for a model id, e.g. "Kimi K2.6". */
+export function modelName(id: string): string {
+  return FREE_MODELS.find((m) => m.id === id)?.name ?? id.split('/').pop() ?? id;
+}
+
+/** Reasoning models put their thinking in `reasoning_content` (or `reasoning`) beside the answer. */
+export function reasoningText(message: any): string {
+  const r = message?.reasoning_content ?? message?.reasoning;
+  return typeof r === 'string' ? r.trim() : '';
+}
+
 function describeHttp(status: number, body: string): string {
   let detail = body;
   try { const j = JSON.parse(body); detail = j?.error?.message || j?.detail || j?.message || j?.title || body; } catch { /* raw text */ }
@@ -420,6 +431,10 @@ export async function nvidiaAgentLoop(params: {
   onText?: (text: string) => void;
   onToolStart?: (name: string, args: any) => void;
   onToolDone?: (name: string, ok: boolean, resultOrError: unknown) => void;
+  /** A rung is about to be asked; `previousError` is set when the one before it failed. */
+  onModel?: (model: string, name: string, previousError?: string) => void;
+  /** The model's own reasoning for a completed turn, when it returns one. */
+  onReasoning?: (text: string) => void;
   maxIterations?: number;
   maxTokens?: number;
   config?: NvidiaConfig;
@@ -455,12 +470,15 @@ export async function nvidiaAgentLoop(params: {
     const last = iteration === maxIterations - 1;
     let turn: Extract<TurnResult, { ok: true }> | null = null;
     let model = '';
+    let previousError: string | undefined;
     while (!turn) {
       if (rung >= ladder.length) return fail(`Free NVIDIA models did not answer: ${attempts.map((a) => `${a.model} — ${a.error}`).join('; ')}`);
       model = ladder[rung];
+      params.onModel?.(model, modelName(model), previousError);
       const r = await completeOnce(doFetch, config, model, 'medium', params.maxTokens ?? 4096, messages, last ? undefined : tools);
       if (!r.ok) {
         attempts.push({ model, error: r.error });
+        previousError = r.error;
         if (r.keyRefused) rung = ladder.length; else rung++;
         continue;
       }
@@ -468,6 +486,7 @@ export async function nvidiaAgentLoop(params: {
       const hasCalls = Array.isArray(r.message?.tool_calls) && r.message.tool_calls.length > 0;
       if (!hasText && !hasCalls) {
         attempts.push({ model, error: `empty answer (finish_reason ${r.finishReason ?? 'unknown'})` });
+        previousError = 'empty answer';
         rung++;
         continue;
       }
@@ -477,6 +496,8 @@ export async function nvidiaAgentLoop(params: {
     outputTokens += turn.outputTokens;
     const text = assistantText(turn.message).trim();
     const calls: any[] = Array.isArray(turn.message?.tool_calls) ? turn.message.tool_calls : [];
+    const reasoning = reasoningText(turn.message);
+    if (reasoning) params.onReasoning?.(reasoning);
     if (text) { shown.push(text); params.onText?.(text); }
     messages.push({ role: 'assistant', content: text || null, ...(calls.length ? { tool_calls: calls } : {}) });
     if (!calls.length) return { ok: true, model, inputTokens, outputTokens, attempts };

@@ -1173,6 +1173,20 @@ export function registerAIChatRoutes({
         return res.status(402).json({ success: false, error: OUT_OF_CREDITS_MSG });
       }
 
+      // The stream opens now so the chat can show what is happening while the
+      // context loads and the models think (a free model can take a minute).
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+      const send = (data: object) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`); };
+      const status = (text: string) => send({ type: 'status', text });
+      // Proxies drop a stream that is silent for long; a comment line keeps it open.
+      const heartbeat = setInterval(() => { if (!res.writableEnded) res.write(': ping\n\n'); }, 15_000);
+      res.on('close', () => clearInterval(heartbeat));
+      status('Reading your brand memory');
+
       const skillsPrompt = await getSkillsPromptForScope(page || '');
 
       let userMemoryBlock = '';
@@ -1198,6 +1212,7 @@ export function registerAIChatRoutes({
         } catch (_err) { /* non-fatal */ }
       }
 
+      status('Checking your workspace');
       const saasContext = await getUserSaaSContext(auth.userId);
 
       // Guardrails for this turn. Memories (some come from a scraped website)
@@ -1227,11 +1242,6 @@ export function registerAIChatRoutes({
       let dynamicPrompt = [userMemoryBlock, saasContext ? fence('workspace data', saasContext, 8000) : '', skillsPrompt].filter(Boolean).join('\n\n');
       const history = fitHistory(messages.slice(-16).map((m) => ({ role: m.role === 'assistant' ? 'assistant' as const : 'user' as const, content: String(m.content || '') })));
 
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-
-      const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
       // Streamed text is checked as it accumulates: once the canary from the
       // top of the system prompt appears, the reply is cut off there.
       let streamed = '';
@@ -1267,6 +1277,11 @@ export function registerAIChatRoutes({
           onText: (text) => sendText(checkOutput(text, { canary: CHAT_CANARY }).text),
           onToolStart: (name, args) => send({ type: 'tool_start', name, label: aiToolLabel(name, args) }),
           onToolDone: (name, ok, result) => send(ok ? { type: 'tool_done', name, success: true, result } : { type: 'tool_done', name, success: false, error: String(result) }),
+          onModel: (_model, name, previousError) => status(previousError ? `That model did not answer — trying ${name}` : `Thinking with ${name}`),
+          onReasoning: (text) => {
+            if (leaked || text.includes(CHAT_CANARY) || text.includes(CHAT_CANARY.slice(0, 9))) return;
+            send({ type: 'thinking', text: text.length > 2000 ? `…${text.slice(-2000)}` : text });
+          },
         });
         freeAttempts = free.attempts;
         if (free.ok) {
@@ -1279,11 +1294,12 @@ export function registerAIChatRoutes({
         logger.warn({ attempts: free.attempts, userId: auth.userId }, 'chat_free_models_failed');
         if (!apiKey) {
           span.end({ status: 'error', provider: 'nvidia', model: 'ladder', attempts: free.attempts, guard: guardOrNull(), error: free.error });
-          send({ type: 'text', text: `\n\n${aiErrorFor(new AIUnavailableError(`The free models did not answer and no paid AI key is set: ${free.error}`), auth.role)}` });
+          send({ type: 'error', error: aiErrorFor(new AIUnavailableError(`The free models did not answer and no paid AI key is set: ${free.error}`), auth.role), retryable: true });
           res.write('data: [DONE]\n\n');
           res.end();
           return;
         }
+        status('The free models are busy — switching to the backup AI');
         if (free.brief) dynamicPrompt = [dynamicPrompt, free.brief].filter(Boolean).join('\n\n');
       }
 
@@ -1436,8 +1452,10 @@ export function registerAIChatRoutes({
       if (!res.headersSent) {
         return res.status(500).json({ success: false, error: shown });
       }
-      res.write(`data: ${JSON.stringify({ error: shown })}\n\n`);
-      res.end();
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: shown, retryable: true })}\n\n`);
+        res.end();
+      }
     }
   });
 
