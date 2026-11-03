@@ -337,6 +337,29 @@ test('E2E: a free model that claims "30 posts created" is corrected; the plan is
     assert.ok(rows.every((r: any) => !/Unlock|secret sauce|Elevate your/.test(r.content)), 'no cliché reached the calendar');
     const action = await pool.query(`SELECT status FROM chat_pending_actions WHERE id=$1`, [estimate.action_id]);
     assert.equal(action.rows[0].status, 'done');
+
+    // A reply as a server job: it runs to the end, can be picked up again, and sending it twice never asks the AI twice.
+    const asked = seen.chat;
+    const turnId = `e2e-turn-${userId.slice(0, 8)}`;
+    const parse = (text: string) => text.split('\n').filter((l) => l.startsWith('data: ') && !l.includes('[DONE]')).map((l) => JSON.parse(l.slice(6)));
+    const first = await request(app).post('/api/ai/chat').send({ messages: [{ role: 'user', content: 'What can you help me with?' }], turn_id: turnId, timezone: 'Europe/London' });
+    assert.equal(first.status, 200);
+    assert.match(first.text, /\[DONE\]/);
+    const firstEvents = parse(first.text);
+    assert.ok(firstEvents.every((e) => typeof e.seq === 'number'), 'every event is numbered so a reconnect can ask for the rest');
+    const textOf = (evs: any[]) => evs.filter((e) => e.type === 'text').map((e) => e.text).join('');
+    assert.ok(textOf(firstEvents).length > 0);
+    assert.equal(seen.chat, asked + 1);
+    const replay = await request(app).get(`/api/ai/chat/turns/${turnId}/events?after=0`);
+    assert.equal(textOf(parse(replay.text)), textOf(firstEvents), 'picked up again later: the same reply');
+    const rest = await request(app).get(`/api/ai/chat/turns/${turnId}/events?after=${firstEvents[1].seq}`);
+    assert.deepEqual(parse(rest.text).map((e) => e.seq), firstEvents.slice(2).map((e) => e.seq), 'only what came after');
+    const twice = await request(app).post('/api/ai/chat').send({ messages: [{ role: 'user', content: 'What can you help me with?' }], turn_id: turnId, after: 0 });
+    assert.equal(textOf(parse(twice.text)), textOf(firstEvents));
+    assert.equal(seen.chat, asked + 1, 'sent again with the same id: joined, not asked again');
+    const saved = await pool.query(`SELECT status, seq FROM chat_turns WHERE id=$1`, [turnId]);
+    assert.equal(saved.rows[0].status, 'done');
+    assert.equal(Number(saved.rows[0].seq), firstEvents[firstEvents.length - 1].seq, 'saved to the database as it went');
   } finally {
     globalThis.fetch = realFetch;
     if (priorKey === undefined) delete process.env.NVIDIA_API_KEY; else process.env.NVIDIA_API_KEY = priorKey;

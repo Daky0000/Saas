@@ -63,6 +63,12 @@ type ActivityMessage = {
   endedAt?: number;
   postsDone: number;
   postsTotal?: number;
+  /** The server job writing this reply: followed again after a drop or a reload. */
+  turnId?: string;
+  /** The last event received from it (resuming asks for the ones after). */
+  seq?: number;
+  /** A connection note while it reconnects ("still working on the server…"). */
+  banner?: string;
 };
 type ToolMessage = {
   kind: 'tool';
@@ -109,6 +115,10 @@ type PlanMessage = {
   agents: PlanAgent[];
   status: 'pending' | 'executing' | 'done';
   agentStatuses?: Record<string, { running: boolean; analysis: string }>;
+  /** The server job running the team, its summary bubble and the last event seen. */
+  turnId?: string;
+  synthId?: string;
+  seq?: number;
 };
 /** A credit estimate the user must accept before a paid action runs. */
 type EstimateMessage = {
@@ -192,6 +202,113 @@ async function readEventStream(res: Response, onEvent: (ev: any) => void): Promi
       if (ev?.error && (!ev.type || ev.type === 'error')) throw new Error(ev.error);
       onEvent(ev);
     }
+  }
+}
+
+// ── Replies that run on the server ───────────────────────────────────────────
+//
+// A reply is a job on the server (it keeps going whatever this tab does). The
+// chat follows it: if the tab is hidden, the phone sleeps or the network
+// blips, the connection may drop — that is not a failure. The chat waits
+// until the tab is back and online, then asks for the events it missed.
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Resolves once the tab is visible and the browser is online (at once if it already is). */
+function whenReachable(): Promise<void> {
+  return new Promise((resolve) => {
+    const ok = () => document.visibilityState === 'visible' && navigator.onLine !== false;
+    if (ok()) { resolve(); return; }
+    const check = () => { if (ok()) { document.removeEventListener('visibilitychange', check); window.removeEventListener('online', check); resolve(); } };
+    document.addEventListener('visibilitychange', check);
+    window.addEventListener('online', check);
+  });
+}
+
+/** Reads one response of a reply's events. `finished`: the reply ended; `elsewhere`: another server has it, ask again soon. */
+async function readTurnStream(res: Response, onEvent: (ev: any) => void): Promise<{ finished: boolean; elsewhere: boolean }> {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return { finished: false, elsewhere: false };
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const payload = line.slice(6).trim();
+      if (payload === '[DONE]') return { finished: true, elsewhere: false };
+      let ev: any;
+      try { ev = JSON.parse(payload); } catch { continue; }
+      if (ev?.type === 'turn_elsewhere') return { finished: false, elsewhere: true };
+      onEvent(ev);
+    }
+  }
+}
+
+/** A reply's own error (sent by the server), as opposed to a dropped connection. */
+class TurnError extends Error { turnError = true; retryable: boolean; constructor(message: string, retryable = true) { super(message); this.retryable = retryable; } }
+
+/**
+ * Follows a server reply to its end. `start` sends it (the first time);
+ * afterwards, and after any drop, the missed events are asked for by number.
+ * Throws only for a real failure: an HTTP error, or the reply's own error.
+ */
+async function followServerTurn(opts: {
+  turnId: string;
+  start?: () => Promise<Response>;
+  after?: number;
+  onEvent: (ev: any) => void;
+  onBanner: (text?: string) => void;
+  signal?: AbortSignal;
+}): Promise<void> {
+  let after = opts.after ?? 0;
+  let drops = 0;
+  let restarts = 0;
+  let next: (() => Promise<Response>) | null = opts.start ?? null;
+  const reconnect = () => fetch(`${getApiBaseUrl()}/api/ai/chat/turns/${encodeURIComponent(opts.turnId)}/events?after=${after}`, {
+    headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` },
+    signal: opts.signal,
+  });
+  for (;;) {
+    if (opts.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    let res: Response | null = null;
+    try {
+      res = await (next ?? reconnect)();
+    } catch (err: any) {
+      if (err?.name === 'AbortError') throw err;
+    }
+    next = null;
+    if (res) {
+      // The first send never reached the server: send it again (same id, so never twice).
+      if (res.status === 404 && opts.start && after === 0 && restarts < 2) { restarts++; next = opts.start; continue; }
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({} as any));
+        const e: any = new Error(d?.error || 'Request failed');
+        e.status = res.status;
+        throw e;
+      }
+      try {
+        const r = await readTurnStream(res, (ev) => {
+          if (drops) { drops = 0; opts.onBanner(undefined); }
+          if (typeof ev?.seq === 'number' && ev.seq > after) after = ev.seq;
+          opts.onEvent(ev);
+        });
+        if (r.finished) { opts.onBanner(undefined); return; }
+        if (r.elsewhere) { await sleep(2500); continue; }
+      } catch (err: any) {
+        if (err?.name === 'AbortError' || err?.turnError) throw err;
+      }
+    }
+    drops++;
+    const away = document.visibilityState !== 'visible' || navigator.onLine === false;
+    opts.onBanner(away
+      ? "Still working on the server — I'll catch up when you're back."
+      : 'Connection dropped — your reply is still being written on the server. Reconnecting…');
+    await whenReachable();
+    await sleep(Math.min(500 * 2 ** Math.min(drops, 4), 6000));
   }
 }
 
@@ -742,6 +859,7 @@ function ActivityCard({ msg }: { msg: ActivityMessage }) {
         {working && <span className="shrink-0 tabular-nums text-slate-400">{elapsed}</span>}
         {hasDetail && <ChevronDown size={13} className={`shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />}
       </button>
+      {working && msg.banner && <p className="mt-1.5 text-[11px] text-amber-700">{msg.banner}</p>}
 
       {working && postLine && (
         <div className="mt-2">
@@ -1796,6 +1914,97 @@ export default function ChatWidget() {
   const messages = store[activeId] ?? NO_MESSAGES;
   const setMessages = setMessagesFor(activeId);
   const loading = Boolean(runningIds[activeId]);
+
+  /**
+   * What one chat reply's events do to the conversation — the same for the
+   * live stream, a reconnect, and a reply resumed after a reload. Replays are
+   * safe: cards are matched by id, and "turn_reset" (a reply rebuilt from its
+   * saved copy) starts its text and steps over.
+   */
+  const makeChatHandler = useCallback((setMsgs: (u: (prev: Message[]) => Message[]) => void, assistantId: string) => {
+    const activityId = `activity-${assistantId}`;
+    const updateActivity = (fn: (a: ActivityMessage) => ActivityMessage) =>
+      setMsgs((prev) => prev.map((m) => (m.id === activityId && m.kind === 'activity' ? fn(m) : m)));
+    const addStep = (step: string) =>
+      updateActivity((a) => (a.steps[a.steps.length - 1] === step ? a : { ...a, steps: [...a.steps, step].slice(-30) }));
+    /** A card goes before the reply bubble; text already written stays where it was (with its own id). */
+    const insertCard = (card: Message, seq: number) => setMsgs((prev) => {
+      if (prev.some((m) => m.id === card.id)) return prev.map((m) => (m.id === card.id ? { ...m, ...card } as Message : m));
+      const kept = prev.map((m) => (m.kind === 'text' && m.id === assistantId && m.content ? { ...m, id: `${assistantId}:${seq}` } : m))
+        .filter((m) => !(m.kind === 'text' && m.id === assistantId));
+      return [...kept, card, { kind: 'text', id: assistantId, role: 'assistant', content: '' } satisfies TextMessage];
+    });
+    return (ev: any) => {
+      const seq = typeof ev?.seq === 'number' ? ev.seq : null;
+      if (seq !== null) updateActivity((a) => (seq > (a.seq ?? 0) ? { ...a, seq } : a));
+      if (ev?.error && (!ev.type || ev.type === 'error')) throw new TurnError(String(ev.error), ev.retryable !== false);
+      if (ev.type === 'turn_reset') {
+        setMsgs((prev) => prev
+          .filter((m) => !(m.kind === 'text' && m.id.startsWith(`${assistantId}:`)))
+          .map((m) => (m.kind === 'text' && m.id === assistantId ? { ...m, content: '' } : m)));
+        updateActivity((a) => ({ ...a, steps: ['Picking up where it left off'], thinking: '', seq: 0 }));
+      } else if (ev.type === 'status' && ev.text) {
+        addStep(String(ev.text));
+      } else if (ev.type === 'thinking' && ev.text) {
+        updateActivity((a) => ({ ...a, thinking: `${a.thinking ? `${a.thinking}\n\n` : ''}${ev.text}`.slice(-6000) }));
+      } else if (ev.type === 'text' && ev.text) {
+        setMsgs((prev) => prev.map((m) => (m.id === assistantId && m.kind === 'text' ? { ...m, content: m.content + ev.text } : m)));
+      } else if (ev.type === 'text_reset') {
+        // The server corrected the reply (e.g. it claimed work no tool did): start the bubble again.
+        setMsgs((prev) => prev
+          .filter((m) => !(m.kind === 'text' && m.id.startsWith(`${assistantId}:`)))
+          .map((m) => (m.id === assistantId && m.kind === 'text' ? { ...m, content: '' } : m)));
+      } else if (ev.type === 'estimate') {
+        addStep(`Estimated ${ev.credits} credits — waiting for your OK`);
+        insertCard({
+          kind: 'estimate', id: `estimate-${ev.action_id}`, actionId: String(ev.action_id), label: String(ev.label || 'Paid action'),
+          credits: Number(ev.credits) || 0, lines: Array.isArray(ev.lines) ? ev.lines.map(String) : [],
+          balance: typeof ev.balance === 'number' ? ev.balance : null, status: 'pending',
+          ...(Array.isArray(ev.plan) ? { plan: ev.plan.slice(0, 60), summary: ev.summary ? String(ev.summary) : undefined } : {}),
+        } satisfies EstimateMessage, seq ?? Date.now());
+      } else if (ev.type === 'tool_start') {
+        addStep(String(ev.label || ev.name).replace(/…$/, ''));
+        insertCard({ kind: 'tool', id: String(ev.tool_id || `tool-${ev.name}-${Date.now()}`), name: ev.name, label: ev.label, status: 'running' } satisfies ToolMessage, seq ?? Date.now());
+      } else if (ev.type === 'tool_done') {
+        if (ev.success && POST_TOOLS.has(ev.name)) {
+          const made = Array.isArray(ev.result?.posts) ? ev.result.posts.length : 1;
+          updateActivity((a) => ({ ...a, postsDone: a.postsDone + made }));
+        }
+        setMsgs((prev) => {
+          const target = ev.tool_id && prev.some((m) => m.id === ev.tool_id)
+            ? (m: Message) => m.id === ev.tool_id
+            : (m: Message) => m.kind === 'tool' && m.name === ev.name && m.status === 'running';
+          let hit = false;
+          return prev.map((m) => {
+            if (hit || m.kind !== 'tool' || !target(m)) return m;
+            hit = true;
+            return { ...m, status: ev.success ? 'done' : 'error', result: ev.result, error: ev.error };
+          });
+        });
+      }
+    };
+  }, []);
+
+  /** What a team plan's events do: agent progress on the plan card, the summary in its bubble. */
+  const makePlanHandler = useCallback((setMsgs: (u: (prev: Message[]) => Message[]) => void, planId: string, synthId: string) => {
+    const patchPlan = (fn: (p: PlanMessage) => PlanMessage) => setMsgs((prev) => prev.map((m) => (m.id === planId && m.kind === 'plan' ? fn(m) : m)));
+    return (ev: any) => {
+      if (typeof ev?.seq === 'number') patchPlan((p) => (ev.seq > (p.seq ?? 0) ? { ...p, seq: ev.seq } : p));
+      if (ev?.type === 'error' && ev.error) throw new TurnError(String(ev.error), ev.retryable !== false);
+      if (ev.type === 'turn_reset') {
+        patchPlan((p) => ({ ...p, agentStatuses: {}, seq: 0 }));
+        setMsgs((prev) => prev.map((m) => (m.id === synthId && m.kind === 'text' ? { ...m, content: '' } : m)));
+      } else if (ev.type === 'agent_start') {
+        patchPlan((p) => ({ ...p, agentStatuses: { ...(p.agentStatuses ?? {}), [ev.key]: { running: true, analysis: '' } } }));
+      } else if (ev.type === 'agent_done') {
+        patchPlan((p) => ({ ...p, agentStatuses: { ...(p.agentStatuses ?? {}), [ev.key]: { running: false, analysis: ev.analysis || '' } } }));
+      } else if (ev.type === 'text' && ev.text) {
+        setMsgs((prev) => prev.map((m) => (m.id === synthId && m.kind === 'text' ? { ...m, content: m.content + ev.text } : m)));
+      } else if (ev.type === 'done') {
+        patchPlan((p) => ({ ...p, status: 'done' }));
+      }
+    };
+  }, []);
   const [input, setInput] = useState('');
   const [attachedImages, setAttachedImages] = useState<AttachedImg[]>([]);
 
@@ -1860,9 +2069,11 @@ export default function ChatWidget() {
     };
     const assistantId = crypto.randomUUID();
     const activityId = `activity-${assistantId}`;
+    // The reply runs on the server under this id; the chat can leave and come back to it.
+    const turnId = crypto.randomUUID();
     const activity: ActivityMessage = {
       kind: 'activity', id: activityId, status: 'working', steps: ['Understanding your request'], thinking: '',
-      startedAt: Date.now(), postsDone: 0, postsTotal: requestedPostCount(rawText),
+      startedAt: Date.now(), postsDone: 0, postsTotal: requestedPostCount(rawText), turnId, seq: 0,
     };
     const updateActivity = (fn: (a: ActivityMessage) => ActivityMessage) =>
       setMessages((prev) => prev.map((m) => (m.id === activityId && m.kind === 'activity' ? fn(m) : m)));
@@ -1918,97 +2129,31 @@ export default function ChatWidget() {
         return;
       }
 
-      const res = await fetch(`${getApiBaseUrl()}/api/ai/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ messages: history, page: window.location.pathname, timezone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } })() }),
+      const body = JSON.stringify({
+        messages: history, page: window.location.pathname, turn_id: turnId,
+        timezone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } })(),
+      });
+      addStep('Connecting to the AI');
+      // The reply is written on the server; this only follows it. Leaving the tab, a sleeping
+      // phone or a network blip just pauses following — it picks up where it stopped.
+      await followServerTurn({
+        turnId,
+        start: () => fetch(`${getApiBaseUrl()}/api/ai/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body,
+          signal: ctrl.signal,
+        }),
+        onEvent: makeChatHandler(setMessages, assistantId),
+        onBanner: (banner) => updateActivity((a) => ({ ...a, banner })),
         signal: ctrl.signal,
       });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        const e: any = new Error((data as any)?.error || 'Request failed');
-        e.status = res.status;
-        throw e;
-      }
-
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let finished = false;
-      addStep('Connecting to the AI');
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const payload = line.slice(6).trim();
-          // The reply has been charged by now; the header badge re-reads the balance.
-          if (payload === '[DONE]') { finished = true; notifyCreditsChanged(); break; }
-          try {
-            const ev = JSON.parse(payload) as any;
-            if (ev.error && (!ev.type || ev.type === 'error')) throw new Error(ev.error);
-            if (ev.type === 'status' && ev.text) {
-              addStep(String(ev.text));
-            } else if (ev.type === 'thinking' && ev.text) {
-              updateActivity((a) => ({ ...a, thinking: `${a.thinking ? `${a.thinking}\n\n` : ''}${ev.text}`.slice(-6000) }));
-            } else if (ev.type === 'text' && ev.text) {
-              setMessages((prev) =>
-                prev.map((m) => m.id === assistantId && m.kind === 'text' ? { ...m, content: m.content + ev.text } : m),
-              );
-            } else if (ev.type === 'text_reset') {
-              // The server corrected the reply (e.g. it claimed work no tool did): start the bubble again.
-              setMessages((prev) =>
-                prev.map((m) => m.id === assistantId && m.kind === 'text' ? { ...m, content: '' } : m),
-              );
-            } else if (ev.type === 'estimate') {
-              addStep(`Estimated ${ev.credits} credits — waiting for your OK`);
-              setMessages((prev) => [
-                ...prev.filter((m) => !(m.kind === 'text' && m.id === assistantId && m.content === '')),
-                {
-                  kind: 'estimate', id: `estimate-${ev.action_id}`, actionId: String(ev.action_id), label: String(ev.label || 'Paid action'),
-                  credits: Number(ev.credits) || 0, lines: Array.isArray(ev.lines) ? ev.lines.map(String) : [],
-                  balance: typeof ev.balance === 'number' ? ev.balance : null, status: 'pending',
-                  ...(Array.isArray(ev.plan) ? { plan: ev.plan.slice(0, 60), summary: ev.summary ? String(ev.summary) : undefined } : {}),
-                } satisfies EstimateMessage,
-                { kind: 'text', id: assistantId, role: 'assistant', content: '' },
-              ]);
-            } else if (ev.type === 'tool_start') {
-              addStep(String(ev.label || ev.name).replace(/…$/, ''));
-              const toolId = `tool-${ev.name}-${Date.now()}`;
-              setMessages((prev) => [
-                ...prev.filter((m) => !(m.kind === 'text' && m.id === assistantId && m.content === '')),
-                { kind: 'tool', id: toolId, name: ev.name, label: ev.label, status: 'running' },
-                { kind: 'text', id: assistantId, role: 'assistant', content: '' },
-              ]);
-            } else if (ev.type === 'tool_done') {
-              if (ev.success && POST_TOOLS.has(ev.name)) {
-                const made = Array.isArray(ev.result?.posts) ? ev.result.posts.length : 1;
-                updateActivity((a) => ({ ...a, postsDone: a.postsDone + made }));
-              }
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.kind === 'tool' && m.name === ev.name && m.status === 'running'
-                    ? { ...m, status: ev.success ? 'done' : 'error', result: ev.result, error: ev.error }
-                    : m,
-                ),
-              );
-            }
-          } catch (parseErr: any) {
-            if (parseErr?.name !== 'SyntaxError') throw parseErr;
-          }
-        }
-      }
-      if (!finished) throw new TypeError('The connection dropped before the reply finished.');
-      updateActivity((a) => ({ ...a, status: 'done', endedAt: Date.now() }));
+      // The reply has been charged by now; the header badge re-reads the balance.
+      notifyCreditsChanged();
+      updateActivity((a) => ({ ...a, status: 'done', endedAt: Date.now(), banner: undefined }));
     } catch (err: any) {
       if (err?.name === 'AbortError') { updateActivity((a) => (a.status === 'working' ? { ...a, status: 'done', endedAt: Date.now() } : a)); return; }
-      updateActivity((a) => ({ ...a, status: 'failed', endedAt: Date.now() }));
+      updateActivity((a) => ({ ...a, status: 'failed', endedAt: Date.now(), banner: undefined }));
       setMessages((prev) => {
         const failed: TextMessage = { kind: 'text', id: assistantId, role: 'assistant', failed: true, attempt, ...describeFailure(err, attempt) };
         return prev.some((m) => m.id === assistantId)
@@ -2047,7 +2192,7 @@ export default function ChatWidget() {
         });
       }, 60);
     }
-  }, [input, loading, messages, attachedImages, activeId, setMessagesFor, setLoadingFor]);
+  }, [input, loading, messages, attachedImages, activeId, setMessagesFor, setLoadingFor, makeChatHandler]);
 
   /** Sends the user message behind a failed reply again, from the conversation as it was before it. */
   const retry = useCallback((failedId: string) => {
@@ -2079,59 +2224,43 @@ export default function ChatWidget() {
     const setLoading = setLoadingFor(activeId);
     const token = localStorage.getItem('auth_token');
     const history = messages.filter((m): m is TextMessage => m.kind === 'text').map(({ role, content }) => ({ role, content }));
-
-    setMessages((prev) => prev.map((m) => m.id === planId && m.kind === 'plan' ? { ...m, status: 'executing', agents: planAgents } : m));
-    setLoading(true);
+    // The team runs on the server under this id; the chat can leave and come back to it.
+    const turnId = crypto.randomUUID();
     const synthId = crypto.randomUUID();
-    setMessages((prev) => [...prev, { kind: 'text', id: synthId, role: 'assistant', content: '' } satisfies TextMessage]);
+
+    setMessages((prev) => [
+      ...prev.map((m) => m.id === planId && m.kind === 'plan' ? { ...m, status: 'executing' as const, agents: planAgents, turnId, synthId, seq: 0 } : m),
+      { kind: 'text', id: synthId, role: 'assistant', content: '' } satisfies TextMessage,
+    ]);
+    setLoading(true);
+    followingRef.current.add(turnId);
 
     try {
       const ctrl = new AbortController();
       abortRef.current = ctrl;
-      const res = await fetch(`${getApiBaseUrl()}/api/ai/execute-plan`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ messages: history, plan: { summary: planMsg.summary, agents: planAgents } }),
+      await followServerTurn({
+        turnId,
+        start: () => fetch(`${getApiBaseUrl()}/api/ai/execute-plan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ messages: history, plan: { summary: planMsg.summary, agents: planAgents }, turn_id: turnId }),
+          signal: ctrl.signal,
+        }),
+        onEvent: makePlanHandler(setMessages, planId, synthId),
+        onBanner: () => undefined,
         signal: ctrl.signal,
       });
-      if (!res.ok) throw new Error('Execute plan failed');
-
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const ev = JSON.parse(line.slice(6).trim()) as any;
-            if (ev.type === 'agent_start') {
-              setMessages((prev) => prev.map((m) => m.id === planId && m.kind === 'plan'
-                ? { ...m, agentStatuses: { ...(m.agentStatuses ?? {}), [ev.key]: { running: true, analysis: '' } } } : m));
-            } else if (ev.type === 'agent_done') {
-              setMessages((prev) => prev.map((m) => m.id === planId && m.kind === 'plan'
-                ? { ...m, agentStatuses: { ...(m.agentStatuses ?? {}), [ev.key]: { running: false, analysis: ev.analysis || '' } } } : m));
-            } else if (ev.type === 'text' && ev.text) {
-              setMessages((prev) => prev.map((m) => m.id === synthId && m.kind === 'text' ? { ...m, content: m.content + ev.text } : m));
-            } else if (ev.type === 'done') {
-              setMessages((prev) => prev.map((m) => m.id === planId && m.kind === 'plan' ? { ...m, status: 'done' } : m));
-            }
-          } catch { /* skip */ }
-        }
-      }
     } catch (err: any) {
       if (err?.name !== 'AbortError') {
-        setMessages((prev) => prev.map((m) => m.id === synthId && m.kind === 'text' ? { ...m, content: err?.message || 'Plan execution failed.' } : m));
+        setMessages((prev) => prev.map((m) => m.id === synthId && m.kind === 'text' ? { ...m, content: m.content || err?.message || 'Plan execution failed.' } : m));
       }
     } finally {
+      setMessages((prev) => prev.map((m) => (m.id === planId && m.kind === 'plan' && m.status === 'executing' ? { ...m, status: 'done' } : m)));
+      followingRef.current.delete(turnId);
       setLoading(false);
       abortRef.current = null;
     }
-  }, [messages, activeId, setMessagesFor, setLoadingFor]);
+  }, [messages, activeId, setMessagesFor, setLoadingFor, makePlanHandler]);
 
   const cancelPlan = useCallback((planId: string) => {
     setMessages((prev) => prev.filter((m) => m.id !== planId));
@@ -2331,6 +2460,52 @@ export default function ChatWidget() {
 
   const authHeaders = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('auth_token')}` });
 
+  /** Follows again the replies (and team plans) of a reopened chat that were still running. */
+  const followingRef = useRef<Set<string>>(new Set());
+  const resumeTurns = useCallback((sid: string, msgs: Message[]) => {
+    const setMsgs = setMessagesFor(sid);
+    for (const m of msgs) {
+      if (m.kind === 'activity' && m.status === 'working' && m.turnId && !followingRef.current.has(m.turnId)) {
+        const turnId = m.turnId;
+        const assistantId = m.id.slice('activity-'.length);
+        followingRef.current.add(turnId);
+        const setLoading = setLoadingFor(sid);
+        const updateActivity = (fn: (a: ActivityMessage) => ActivityMessage) =>
+          setMsgs((prev) => prev.map((x) => (x.id === m.id && x.kind === 'activity' ? fn(x) : x)));
+        setLoading(true);
+        updateActivity((a) => ({ ...a, banner: 'Picking up your reply…' }));
+        void followServerTurn({
+          turnId,
+          after: m.seq ?? 0,
+          onEvent: makeChatHandler(setMsgs, assistantId),
+          onBanner: (banner) => updateActivity((a) => ({ ...a, banner })),
+        })
+          .then(() => { notifyCreditsChanged(); updateActivity((a) => ({ ...a, status: 'done', endedAt: Date.now(), banner: undefined })); })
+          .catch((err) => {
+            updateActivity((a) => ({ ...a, status: 'failed', endedAt: Date.now(), banner: undefined }));
+            setMsgs((prev) => {
+              const failed: TextMessage = { kind: 'text', id: assistantId, role: 'assistant', failed: true, attempt: 1, ...describeFailure(err, 1) };
+              return prev.some((x) => x.id === assistantId) ? prev.map((x) => (x.id === assistantId && x.kind === 'text' ? failed : x)) : [...prev, failed];
+            });
+          })
+          .finally(() => { followingRef.current.delete(turnId); setLoading(false); });
+      }
+      if (m.kind === 'plan' && m.status === 'executing' && m.turnId && m.synthId && !followingRef.current.has(m.turnId)) {
+        const turnId = m.turnId;
+        followingRef.current.add(turnId);
+        const setLoading = setLoadingFor(sid);
+        setLoading(true);
+        void followServerTurn({ turnId, after: m.seq ?? 0, onEvent: makePlanHandler(setMsgs, m.id, m.synthId), onBanner: () => undefined })
+          .catch((err) => setMsgs((prev) => prev.map((x) => (x.id === m.synthId && x.kind === 'text' ? { ...x, content: x.content || err?.message || 'The team could not finish.' } : x))))
+          .finally(() => {
+            setMsgs((prev) => prev.map((x) => (x.id === m.id && x.kind === 'plan' ? { ...x, status: 'done' } : x)));
+            followingRef.current.delete(turnId);
+            setLoading(false);
+          });
+      }
+    }
+  }, [setMessagesFor, setLoadingFor, makeChatHandler]);
+
   const openSession = useCallback(async (sid: string) => {
     setActiveId(sid);
     setShowHistory(false);
@@ -2348,8 +2523,10 @@ export default function ChatWidget() {
       for (const m of msgs) {
         if (m.kind === 'estimate' && (m.status === 'running' || m.status === 'pending')) void driveAction(sid, m.actionId, 'follow');
       }
+      // Replies still being written when the chat was closed carry on from where they were.
+      resumeTurns(sid, msgs);
     } catch { loadedRef.current[sid] = false; }
-  }, [store, driveAction]);
+  }, [store, driveAction, resumeTurns]);
 
   const newChat = useCallback(() => {
     setActiveId(crypto.randomUUID());
@@ -2379,21 +2556,38 @@ export default function ChatWidget() {
       .catch(() => undefined);
   }, [open, activeId, openSession]);
 
-  // Autosave: a session is saved shortly after it changes, once it is not mid-reply.
+  // Autosave: a session is saved shortly after it changes. Mid-reply it is saved every few
+  // seconds as well, so a reply that runs on after the browser closes is found again.
+  const saveSession = useCallback((sid: string, msgs: Message[]) => {
+    if (!msgs.length) return;
+    const json = JSON.stringify(msgs);
+    if (savedRef.current[sid] === json) return;
+    savedRef.current[sid] = json;
+    const body = JSON.stringify({ title: sessionTitle(msgs), messages: msgs });
+    void fetch(`${getApiBaseUrl()}/api/ai/chat/sessions/${encodeURIComponent(sid)}`, {
+      // keepalive lets a save started as the page closes finish (browsers allow it under 64 KB).
+      method: 'PUT', headers: authHeaders(), body, keepalive: body.length < 60_000,
+    }).catch(() => { delete savedRef.current[sid]; });
+  }, []);
+  const storeRef = useRef(store);
+  storeRef.current = store;
   useEffect(() => {
     const t = setTimeout(() => {
-      for (const [sid, msgs] of Object.entries(store)) {
-        if (runningIds[sid] || !msgs.length) continue;
-        const json = JSON.stringify(msgs);
-        if (savedRef.current[sid] === json) continue;
-        savedRef.current[sid] = json;
-        void fetch(`${getApiBaseUrl()}/api/ai/chat/sessions/${encodeURIComponent(sid)}`, {
-          method: 'PUT', headers: authHeaders(), body: JSON.stringify({ title: sessionTitle(msgs), messages: msgs }),
-        }).catch(() => { delete savedRef.current[sid]; });
-      }
+      for (const [sid, msgs] of Object.entries(store)) if (!runningIds[sid]) saveSession(sid, msgs);
     }, 800);
     return () => clearTimeout(t);
-  }, [store, runningIds]);
+  }, [store, runningIds, saveSession]);
+  useEffect(() => {
+    const running = Object.entries(runningIds).filter(([, on]) => on).map(([sid]) => sid);
+    if (!running.length) return;
+    const save = () => { for (const sid of running) saveSession(sid, storeRef.current[sid] ?? []); };
+    const iv = setInterval(save, 4000);
+    // Leaving the page: save what there is now (the reply goes on on the server).
+    const onHide = () => { if (document.visibilityState === 'hidden') save(); };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', save);
+    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('pagehide', save); };
+  }, [runningIds, saveSession]);
 
   // ── Form submit ───────────────────────────────────────────────────────────
 
