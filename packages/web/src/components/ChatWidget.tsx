@@ -125,7 +125,12 @@ type EstimateMessage = {
   banner?: string;
   /** Not enough credits to start: show the top-up link; the card stays usable. */
   needsCredits?: boolean;
+  /** For a batch of posts: every planned post, shown before anything is paid for. */
+  plan?: PlannedPostPreview[];
+  /** One line: "30 posts: 10 × Instagram carousel, … Pillars: …". */
+  summary?: string;
 };
+type PlannedPostPreview = { platform: string; format: string; slides?: number; topic: string; pillar?: string; scheduled_at?: string | null };
 type BatchItem = {
   index: number; topic: string; platform?: string; format?: string;
   status: 'queued' | 'writing' | 'media' | 'done' | 'failed';
@@ -771,12 +776,16 @@ function ActivityCard({ msg }: { msg: ActivityMessage }) {
 
 function EstimateCard({ msg, busy, onProceed, onCancel, onResume }: { msg: EstimateMessage; busy: boolean; onProceed: () => void; onCancel: () => void; onResume: () => void }) {
   const short = msg.needsCredits || (msg.balance !== null && msg.balance < msg.credits);
+  const [showPlan, setShowPlan] = useState(false);
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2.5 text-xs">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-semibold text-slate-800">{msg.label}</p>
-          {msg.lines.map((l) => <p key={l} className="text-[11px] text-slate-500">{l}</p>)}
+          {msg.lines.map((l) => <p key={l} className={`text-[11px] ${l.startsWith('⚠') ? 'text-amber-700' : 'text-slate-500'}`}>{l}</p>)}
+          {msg.summary && /Pillars:/.test(msg.summary) && (
+            <p className="mt-0.5 text-[11px] text-slate-500">Content pillars: {msg.summary.split('Pillars:')[1]?.trim()}</p>
+          )}
         </div>
         <div className="shrink-0 text-right">
           <p className="text-sm font-bold tabular-nums text-slate-900">{msg.credits}</p>
@@ -787,6 +796,37 @@ function EstimateCard({ msg, busy, onProceed, onCancel, onResume }: { msg: Estim
         <p className={`mt-1 text-[11px] ${short ? 'text-red-600' : 'text-slate-500'}`}>
           Balance {msg.balance} → {Math.max(0, msg.balance - msg.credits)} after this{short ? ' — not enough credits to finish' : ''}
         </p>
+      )}
+      {msg.plan && msg.plan.length > 0 && (
+        <div className="mt-1.5">
+          <button type="button" onClick={() => setShowPlan((v) => !v)} className="text-[11px] font-semibold text-indigo-600 hover:underline">
+            {showPlan ? 'Hide the plan' : `See the plan (${msg.plan.length} post${msg.plan.length === 1 ? '' : 's'})`}
+          </button>
+          {showPlan && (
+            <ul className="mt-1 max-h-56 divide-y divide-amber-100 overflow-y-auto rounded-lg bg-white/70 ring-1 ring-amber-100">
+              {msg.plan.map((p, i) => {
+                const pid = platformId(p.platform);
+                const meta = pid ? PLATFORM_META[pid] : null;
+                return (
+                  <li key={i} className="flex items-start gap-2 px-2 py-1.5">
+                    {pid && <span className="mt-0.5 shrink-0"><PlatformLogo platform={pid} size={13} /></span>}
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[11px] text-slate-700">{p.topic}</span>
+                      <span className="block text-[10px]" style={{ color: meta?.color ?? '#94a3b8' }}>
+                        {meta ? `${meta.label} ` : ''}{SOCIAL_FORMAT_LABEL[p.format] ?? p.format}{p.slides ? ` · ${p.slides} slides` : ''}{p.pillar ? ` · ${p.pillar}` : ''}
+                      </span>
+                    </span>
+                    {p.scheduled_at && (
+                      <span className="shrink-0 text-[10px] text-slate-400">
+                        {new Date(p.scheduled_at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       )}
       {msg.banner && <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-amber-700"><Loader2 size={11} className="animate-spin" />{msg.banner}</p>}
       {msg.status === 'pending' ? (
@@ -1871,6 +1911,11 @@ export default function ChatWidget() {
               setMessages((prev) =>
                 prev.map((m) => m.id === assistantId && m.kind === 'text' ? { ...m, content: m.content + ev.text } : m),
               );
+            } else if (ev.type === 'text_reset') {
+              // The server corrected the reply (e.g. it claimed work no tool did): start the bubble again.
+              setMessages((prev) =>
+                prev.map((m) => m.id === assistantId && m.kind === 'text' ? { ...m, content: '' } : m),
+              );
             } else if (ev.type === 'estimate') {
               addStep(`Estimated ${ev.credits} credits — waiting for your OK`);
               setMessages((prev) => [
@@ -1879,6 +1924,7 @@ export default function ChatWidget() {
                   kind: 'estimate', id: `estimate-${ev.action_id}`, actionId: String(ev.action_id), label: String(ev.label || 'Paid action'),
                   credits: Number(ev.credits) || 0, lines: Array.isArray(ev.lines) ? ev.lines.map(String) : [],
                   balance: typeof ev.balance === 'number' ? ev.balance : null, status: 'pending',
+                  ...(Array.isArray(ev.plan) ? { plan: ev.plan.slice(0, 60), summary: ev.summary ? String(ev.summary) : undefined } : {}),
                 } satisfies EstimateMessage,
                 { kind: 'text', id: assistantId, role: 'assistant', content: '' },
               ]);

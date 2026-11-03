@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { MAGNIFIC_IMAGE_MODELS, MAGNIFIC_VIDEO_MODELS } from './magnificRoutes.ts';
 import {
-  ECONOMY_IMAGE_MODEL, bestSlot, validTimeZone, FORMAT_LABEL, socialImageCredits, PLATFORM_LABEL, socialCopyCredits, socialVideoCredits, clampSlides, mediaPlan,
+  ECONOMY_IMAGE_MODEL, bestSlot, seriesSlot, validTimeZone, FORMAT_LABEL, socialImageCredits, PLATFORM_LABEL, socialCopyCredits, socialVideoCredits, clampSlides, mediaPlan,
   normalizeFormat, normalizePlatform, postCredits, type SocialFormat, type SocialPlatform,
 } from './socialFormats.ts';
 import { creditsForMagnific, economyImageCharge, magnificAudioCost, magnificEditCost, magnificImageCost, magnificLipSyncCost, magnificOneCost, magnificVideoCost } from './aiPricing.ts';
@@ -172,6 +172,10 @@ export interface BatchPost {
   as_draft: boolean;
   /** Saved products/people/places (by name) to show in the visuals. */
   assets: string[];
+  /** The series' content pillar this post belongs to (from the planner). */
+  pillar: string;
+  /** The opening line the planner suggested. */
+  hook: string;
 }
 
 /**
@@ -184,6 +188,14 @@ export function batchPosts(input: any, now = new Date()): BatchPost[] {
   const raw: any[] = Array.isArray(input?.posts) ? input.posts.slice(0, BATCH_MAX_POSTS) : [];
   const tz = validTimeZone(input?.timezone);
   const out: BatchPost[] = [];
+  // Two posts on one platform never share a minute.
+  const taken = new Set<string>();
+  const claim = (platform: SocialPlatform, at: Date): Date => {
+    let t = at;
+    for (let k = 0; k < 8 && taken.has(`${platform}:${t.toISOString()}`); k++) t = new Date(t.getTime() + 3 * 3_600_000);
+    taken.add(`${platform}:${t.toISOString()}`);
+    return t;
+  };
   raw.forEach((p, i) => {
     const topic = String(p?.topic ?? p?.title ?? p?.brief ?? '').trim().slice(0, 600);
     if (!topic) return;
@@ -192,16 +204,22 @@ export function batchPosts(input: any, now = new Date()): BatchPost[] {
     const named = [p?.platform, ...(Array.isArray(p?.platforms) ? p.platforms : []), ...(p?.platform || Array.isArray(p?.platforms) ? [] : Array.isArray(input?.platforms) ? input.platforms : [])]
       .map(normalizePlatform).filter((x): x is SocialPlatform => Boolean(x));
     const platforms = [...new Set(named.length ? named : ['instagram' as SocialPlatform])];
+    const day = Math.round(Number(p?.day));
     for (const platform of platforms) {
-      const format = normalizeFormat(platform, p?.format);
-      // No usable time from the planner: the platform's best slot in the user's timezone, one entry per day from tomorrow.
-      const scheduled_at = (valid ? when! : bestSlot(platform, 1 + i, tz, now)).toISOString();
+      // No format (or one the platform cannot do): the one this brief needs.
+      const format = normalizeFormat(platform, p?.format, topic);
+      // The planner's own time is kept; a planned day gets the platform's best time that day;
+      // otherwise the platform's best slot, one entry per day from tomorrow.
+      const at = valid ? when! : Number.isFinite(day) && day >= 1 ? seriesSlot(platform, day, tz, now, taken) : claim(platform, bestSlot(platform, 1 + i, tz, now));
+      if (valid) taken.add(`${platform}:${at.toISOString()}`);
       out.push({
-        topic, platform, format, scheduled_at, as_draft: p?.as_draft === true,
+        topic, platform, format, scheduled_at: at.toISOString(), as_draft: p?.as_draft === true,
         assets: Array.isArray(p?.assets) ? p.assets.map((x: unknown) => String(x).replace(/^@/, '').trim()).filter(Boolean).slice(0, 4) : [],
         slides: format === 'carousel' ? clampSlides(p?.slides) : 0,
         with_image: format === 'text' ? Boolean(p?.with_image) : false,
         visual: String(p?.visual ?? p?.visual_direction ?? '').trim().slice(0, 600),
+        pillar: String(p?.pillar ?? '').trim().slice(0, 80),
+        hook: String(p?.hook ?? '').trim().slice(0, 200),
       });
     }
   });

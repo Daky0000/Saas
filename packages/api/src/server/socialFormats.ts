@@ -65,11 +65,53 @@ export function normalizePlatform(raw: unknown): SocialPlatform | null {
   return (SOCIAL_PLATFORMS as string[]).includes(p) ? (p as SocialPlatform) : null;
 }
 
-export function normalizeFormat(platform: SocialPlatform, raw: unknown): SocialFormat {
+/**
+ * What a post is trying to do, read from its brief. It decides the format
+ * when the planner gave none (or one the platform cannot do):
+ *   show     — motion carries it (behind the scenes, a process, a demo) → reel / video
+ *   teach    — steps, lists, comparisons, myths → carousel
+ *   announce — something worth seeing (launch, offer, product, event) → single image
+ *   story    — an opinion, lesson or moment → text where the platform reads text
+ *   engage   — a question or a poll → text / single image
+ */
+export type PostIntent = 'show' | 'teach' | 'announce' | 'story' | 'engage';
+
+const INTENT_PATTERNS: Array<[PostIntent, RegExp]> = [
+  ['show', /\b(behind[- ]the[- ]scenes|bts|day in (the|my|our) life|demo\w*|tutorial|walk ?through|unbox\w*|time-?lapse|before (and|&) after|transformation|how (we|i) (make|made|build|built|bake|brew|cook|pack|prep)|in action|recipe|routine|tour|making of|watch (us|me|how)|try[- ]on|reveal|process video|in motion)\b/i],
+  ['teach', /\b(\d+\s+(ways|tips|steps|mistakes|reasons|signs|things|ideas|lessons|myths|tools|hacks|rules|questions|habits|secrets)|tips?|how to|step[- ]by[- ]step|guide|checklist|framework|playbook|vs\.?|versus|compar(e|ison)|breakdown|cheat ?sheet|myths?|do'?s and don'?ts|explained|101|faqs?)\b/i],
+  ['announce', /\b(announc\w*|launch\w*|introduc\w*|new arrival|now (open|available|live)|offer|sale|discount|% off|promo\w*|event|giveaway|webinar|grand opening|coming soon|pre-?order|testimonial|customer review|menu|product spotlight|spotlight|featured)\b/i],
+  ['story', /\b(story|lesson|learned|opinion|unpopular|hot take|thoughts? on|why (i|we)|confession|journey|mistake (i|we)|founder|milestone|reflection|truth about|what (i|we) wish)\b/i],
+  ['engage', /\b(poll|question for you|ask (us|me)|which (one|do you)|this or that|tell us|caption this|guess)\b/i],
+];
+
+export function postIntent(topic: string): PostIntent | null {
+  const t = String(topic || '');
+  for (const [intent, re] of INTENT_PATTERNS) if (re.test(t)) return intent;
+  return null;
+}
+
+/** For each intent, the formats that serve it, best first. */
+const INTENT_FORMATS: Record<PostIntent, SocialFormat[]> = {
+  show: ['reel', 'video', 'carousel', 'single_image'],
+  teach: ['carousel', 'text', 'single_image'],
+  announce: ['single_image', 'reel', 'video', 'text'],
+  story: ['text', 'carousel', 'single_image'],
+  engage: ['text', 'single_image'],
+};
+
+/** The format that serves this brief best on this platform (the platform's default when the brief says nothing). */
+export function recommendFormat(platform: SocialPlatform, topic: string): SocialFormat {
+  const allowed = PLATFORM_FORMATS[platform];
+  const intent = postIntent(topic);
+  if (intent) for (const f of INTENT_FORMATS[intent]) if (allowed.includes(f)) return f;
+  return allowed[0];
+}
+
+export function normalizeFormat(platform: SocialPlatform, raw: unknown, topic = ''): SocialFormat {
   const f = String(raw ?? '').toLowerCase().trim().replace(/[\s-]+/g, '_');
   const alias: Record<string, SocialFormat> = {
-    image: 'single_image', photo: 'single_image', post: 'single_image', feed_post: 'single_image', single: 'single_image', image_post: 'single_image',
-    slides: 'carousel', slideshow: 'carousel', document: 'carousel',
+    image: 'single_image', photo: 'single_image', post: 'single_image', feed_post: 'single_image', single: 'single_image', image_post: 'single_image', graphic: 'single_image',
+    slides: 'carousel', slideshow: 'carousel', document: 'carousel', pdf: 'carousel',
     reels: 'reel', short: 'video', shorts: 'video', clip: 'video',
     stories: 'story', tweet: 'text', status: 'text', text_only: 'text', caption: 'text',
   };
@@ -79,7 +121,8 @@ export function normalizeFormat(platform: SocialPlatform, raw: unknown): SocialF
   // Close substitutes: a reel where only "video" exists, and the reverse.
   if (wanted === 'reel' && allowed.includes('video')) return 'video';
   if (wanted === 'video' && allowed.includes('reel')) return 'reel';
-  return allowed[0];
+  // Missing or not possible here: what the brief needs.
+  return recommendFormat(platform, topic);
 }
 
 export function isVideoFormat(format: SocialFormat): boolean {
@@ -125,25 +168,30 @@ export const CAPTION_LIMIT: Record<SocialPlatform, number> = {
   instagram: 2200, facebook: 5000, linkedin: 3000, x: 280, threads: 500, tiktok: 2200, youtube: 1000, pinterest: 500,
 };
 
+/** Most hashtags worth using per platform (Instagram allows at most 5 since late 2025; Pinterest ignores them). */
+export const HASHTAG_LIMIT: Record<SocialPlatform, number> = {
+  instagram: 5, facebook: 2, linkedin: 3, x: 1, threads: 1, tiktok: 5, youtube: 3, pinterest: 0,
+};
+
 /** How to write for this platform and format — the brief the writer model follows. */
 export function writingRules(platform: SocialPlatform, format: SocialFormat): string {
   const base: Record<SocialPlatform, string> = {
-    instagram: 'Instagram caption: a scroll-stopping first line (the hook shows before "more"), short paragraphs with line breaks, 1–3 relevant emojis at most, a clear call to action (save, share, comment, link in bio), then 5–10 targeted hashtags on their own line at the end. Max 2,200 characters; aim for 80–220 words. No links (they are not clickable).',
-    facebook: 'Facebook post: conversational, 40–120 words, a question or a clear call to action to drive comments, 0–3 hashtags. Links are fine.',
-    linkedin: 'LinkedIn post: a 1–2 line hook that earns the "see more" click, then short scannable lines with white space, a professional but human voice, a concrete takeaway or story, and a closing question. 120–250 words, 3–5 hashtags at the end. No emoji walls.',
-    x: 'X (Twitter) post: ONE tweet, at most 270 characters including hashtags, punchy and specific, 0–2 hashtags. No threads, no "1/".',
-    threads: 'Threads post: casual and conversational, at most 450 characters, invites replies, 0–3 hashtags (Threads uses one topic tag best).',
-    tiktok: 'TikTok caption: at most 150 characters, curiosity hook, 3–5 hashtags including one broad and some niche ones.',
-    youtube: 'YouTube Shorts title + description: a title under 70 characters, then 1–2 sentences and 3 hashtags including #Shorts.',
-    pinterest: 'Pinterest pin: a keyword-rich title under 100 characters and a description of 1–3 sentences (max 500 characters) with natural search keywords. No hashtag walls.',
+    instagram: 'Instagram caption: the first line is the hook and must work on its own inside the first 125 characters (all people see before "more") — a specific promise, number or moment, not a greeting. Then short paragraphs with line breaks, using the words people in this niche search for (Instagram search reads captions). 0–3 emojis. End with ONE call to action that fits this post (save it, send it to someone, comment a word, link in bio). 3–5 specific hashtags (never more than 5). Aim for 60–200 words. No links (they are not clickable).',
+    facebook: 'Facebook post: conversational, like talking to a regular customer, 40–120 words. End with a question people can answer from experience or a clear next step. 0–2 hashtags. A link is fine when there is somewhere real to send people.',
+    linkedin: 'LinkedIn post: the first 1–2 lines (under 200 characters) earn the "see more" click with a specific claim, number or moment from the brand\'s real work — not a question, not "I\'m thrilled to announce". Then short lines with white space, first person and human, ONE concrete story, example or takeaway, and a closing question that practitioners can answer. 120–250 words, at most 3 hashtags at the end. No emoji walls, no links in the body.',
+    x: 'X (Twitter) post: ONE tweet of at most 270 characters including hashtags — one sharp, specific idea (a number, an opinion, a tip, a result). 0–1 hashtags. No threads, no "1/", no "🧵".',
+    threads: 'Threads post: casual, like a text to a friend in the industry, at most 450 characters, ending with something people want to reply to. At most one topic tag.',
+    tiktok: 'TikTok caption: 1–2 lines, at most 150 characters before hashtags, containing the words people would type to find this video (TikTok search reads captions). Then 3–5 hashtags: one broad, the rest niche.',
+    youtube: 'YouTube Shorts: the caption is a 1–2 sentence description that includes the main search keyword, then 3 hashtags including #Shorts. Put a title under 70 characters in "title".',
+    pinterest: 'Pinterest pin: a description of 1–3 sentences (max 500 characters) written with the words people search for, saying what they get from clicking. No hashtags. Put a keyword-rich title under 100 characters in "title".',
   };
   const shape: Record<SocialFormat, string> = {
-    text: 'This is a text-only post: the words carry everything.',
-    single_image: 'This post is one image plus the caption. Describe the image to generate in image_prompt; the caption should complement the image, not describe it.',
-    carousel: 'This is a carousel. Write the slides: slide 1 is a bold hook (max 8 words), the middle slides each deliver ONE point (headline max 8 words + body max 25 words), the last slide is a call to action. The caption summarises and tells people to swipe. Give ONE visual_style shared by every slide so they look like a set (palette, typography, layout, background).',
-    reel: 'This is a short vertical video (Reel). Write video_prompt: the action and camera movement for 5–10 seconds, vertical 9:16, no on-screen text. Write image_prompt for the cover frame. The caption hooks the viewer and adds context.',
+    text: 'This is a text-only post: the words carry everything, so the first line must be impossible to scroll past.',
+    single_image: 'This post is one image plus the caption. image_prompt shows THIS brand\'s real thing (its product, place, people, work or result from the brand facts) — never a generic stock scene. The caption adds what the image cannot say; it never describes the image.',
+    carousel: 'This is a carousel. Write the slides: slide 1 is a bold, specific hook (max 8 words) that promises the payoff; each middle slide delivers ONE point (headline max 8 words + body max 25 words) so every slide earns the next swipe; the last slide is the call to action. The caption gives context and tells people to swipe/save. Give ONE visual_style shared by every slide so they look like a set (palette, typography, layout, background) — use the brand\'s colours when known.',
+    reel: 'This is a short vertical video (Reel, 9:16), animated from one opening frame. Choose a scene from this brand\'s real world with ONE clear motion. image_prompt = that opening frame (subject, setting, light). video_prompt = ONLY the motion and the camera move over 5 seconds (e.g. "steam rises from the cup as the camera slowly pushes in") — do not re-describe the scene, no on-screen text. The caption hooks the viewer and adds the context the video cannot.',
     story: 'This is a vertical Story (9:16): one image with very little text and one call to action. Keep the caption short (it is not shown on Stories; use it as an internal note).',
-    video: 'This is a short vertical video. Write video_prompt: the action and camera movement for 5–10 seconds, no on-screen text. Write image_prompt for the cover frame.',
+    video: 'This is a short vertical video, animated from one opening frame. image_prompt = the opening frame from this brand\'s real world; video_prompt = ONLY the motion and camera move over 5 seconds, not the scene again, no on-screen text. The caption hooks and adds context.',
   };
   return `${base[platform]}\n${shape[format]}`;
 }
@@ -164,18 +212,25 @@ export function pieceSchema(format: SocialFormat, slides: number): string {
   const slideHint = format === 'carousel'
     ? `, "visual_style": "one shared look for every slide", "slides": [${Array.from({ length: slides }, (_, i) => `{"headline": "slide ${i + 1} headline", "body": "${i === 0 ? 'short subline or empty' : 'max 25 words'}"}`).join(', ')}]`
     : '';
-  const media = format === 'text' ? '' : ', "image_prompt": "a vivid, specific image-generation prompt under 70 words: subject, setting, lighting, composition, style. No text in the image unless essential", "alt_text": "one-sentence description for accessibility"';
-  const video = isVideoFormat(format) ? ', "video_prompt": "the motion: action and camera movement for 5–10 seconds"' : '';
+  const media = format === 'text' ? '' : ', "image_prompt": "a vivid, specific image-generation prompt under 70 words showing this brand\'s real product, place, people or result: subject, setting, lighting, composition, style. No generic stock scenes (handshakes, people pointing at laptops, lightbulbs, rockets). No text in the image unless essential", "alt_text": "one-sentence description for accessibility"';
+  const video = isVideoFormat(format) ? ', "video_prompt": "ONLY the motion and camera move over 5 seconds, not the scene again"' : '';
   return `{"title": "a short internal label (max 60 chars)", "caption": "the post text exactly as it should be published, without the hashtags", "hashtags": ["tag", "tag"]${media}${video}${slideHint}}`;
 }
 
 export function parsePiece(raw: string, format: SocialFormat, slides: number): SocialPiece {
   let j: any = {};
   try { j = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); } catch { j = { caption: raw }; }
-  const tags = Array.isArray(j.hashtags) ? j.hashtags : typeof j.hashtags === 'string' ? j.hashtags.split(/[\s,]+/) : [];
+  const tags: unknown[] = Array.isArray(j.hashtags) ? j.hashtags : typeof j.hashtags === 'string' ? j.hashtags.split(/[\s,]+/) : [];
+  // Hashtags the writer left at the end of the caption move to the hashtag list (no doubles when published).
+  let caption = String(j.caption ?? j.content ?? '').trim();
+  const trailing = caption.match(/(?:\n|^)\s*((?:#[\p{L}\p{N}_]+[\s,]*)+)$/u);
+  if (trailing && trailing.index !== undefined && trailing.index > 0) {
+    tags.push(...trailing[1].split(/[\s,]+/).filter(Boolean));
+    caption = caption.slice(0, trailing.index).trim();
+  }
   const piece: SocialPiece = {
     title: String(j.title || '').trim().slice(0, 120),
-    caption: String(j.caption ?? j.content ?? '').trim(),
+    caption,
     hashtags: tags.map((t: unknown) => String(t).trim().replace(/^#+/, '').replace(/[^\p{L}\p{N}_]/gu, '')).filter(Boolean).slice(0, 15),
     image_prompt: String(j.image_prompt || '').trim().slice(0, 1200),
     video_prompt: String(j.video_prompt || '').trim().slice(0, 1200),
@@ -191,7 +246,10 @@ export function parsePiece(raw: string, format: SocialFormat, slides: number): S
 
 /** The text that is published: caption plus hashtags, fitted to the platform's limit. */
 export function publishText(platform: SocialPlatform, piece: Pick<SocialPiece, 'caption' | 'hashtags'>): string {
-  const tags = piece.hashtags.map((t) => `#${t}`).join(' ');
+  // Each platform's useful maximum; duplicates (any case) once.
+  const seen = new Set<string>();
+  const unique = piece.hashtags.filter((t) => !seen.has(t.toLowerCase()) && Boolean(seen.add(t.toLowerCase())));
+  const tags = unique.slice(0, HASHTAG_LIMIT[platform]).map((t) => `#${t}`).join(' ');
   const limit = CAPTION_LIMIT[platform];
   let caption = piece.caption.trim();
   const join = platform === 'instagram' || platform === 'linkedin' || platform === 'tiktok' ? '\n\n' : ' ';
@@ -271,6 +329,34 @@ export function bestSlot(platform: SocialPlatform, dayOffset: number, tz: string
     if (at.getTime() > now.getTime() + 30 * 60_000) return at;
   }
   return zonedTime(today.y, today.m, today.d + dayOffset + 1, best.hour, best.minute, tz);
+}
+
+/**
+ * A slot for one post of a planned series: the platform's best local time on
+ * the planned day (`dayOffset` days from today in the user's timezone).
+ * Unlike bestSlot it keeps the planned day, so a 30-day calendar stays spread
+ * over 30 days — except LinkedIn, which moves off the weekend. A slot already
+ * taken on the same platform moves a few hours later, then to the next day.
+ */
+export function seriesSlot(platform: SocialPlatform, dayOffset: number, tz: string, now = new Date(), taken: Set<string> = new Set()): Date {
+  const best = BEST_TIMES[platform];
+  const today = localParts(now, tz);
+  for (let extra = 0; extra < 21; extra++) {
+    const base = new Date(Date.UTC(today.y, today.m - 1, today.d + Math.max(0, dayOffset) + extra));
+    const wd = base.getUTCDay();
+    if (platform === 'linkedin' && (wd === 0 || wd === 6)) continue;
+    for (const shift of [0, 3, 6, -2]) {
+      const hour = best.hour + shift;
+      if (hour < 7 || hour > 21) continue;
+      const at = zonedTime(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate(), hour, best.minute, tz);
+      if (at.getTime() <= now.getTime() + 30 * 60_000) continue;
+      const key = `${platform}:${at.toISOString()}`;
+      if (taken.has(key)) continue;
+      taken.add(key);
+      return at;
+    }
+  }
+  return bestSlot(platform, dayOffset, tz, now);
 }
 
 /** One line for the planner: when to post on each platform, in the user's time. */
