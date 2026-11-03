@@ -925,12 +925,21 @@ const INSTRUCTION_EXAMPLES = [
 function CustomInstructionsPanel({ onDone }: { onDone: () => void }) {
   const [text, setText] = useState('');
   const [saved, setSaved] = useState('');
+  const [mode, setMode] = useState<'economy' | 'quality'>('economy');
+  const [savedMode, setSavedMode] = useState<'economy' | 'quality'>('economy');
+  const [prices, setPrices] = useState<{ economy_image: number; quality_image: number; video: number } | null>(null);
   const [max, setMax] = useState(4000);
   const [state, setState] = useState<'loading' | 'idle' | 'saving' | 'saved' | 'error'>('loading');
   useEffect(() => {
     fetch(`${getApiBaseUrl()}/api/ai/custom-instructions`, { headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` } })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { const t = String(d?.instructions || ''); setText(t); setSaved(t); if (d?.max) setMax(d.max); setState('idle'); })
+      .then((d) => {
+        const t = String(d?.instructions || ''); setText(t); setSaved(t);
+        const m = d?.media_mode === 'quality' ? 'quality' : 'economy'; setMode(m); setSavedMode(m);
+        if (d?.prices) setPrices(d.prices);
+        if (d?.max) setMax(d.max);
+        setState('idle');
+      })
       .catch(() => setState('idle'));
   }, []);
   const save = async () => {
@@ -939,22 +948,39 @@ function CustomInstructionsPanel({ onDone }: { onDone: () => void }) {
       const r = await fetch(`${getApiBaseUrl()}/api/ai/custom-instructions`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('auth_token')}` },
-        body: JSON.stringify({ instructions: text }),
+        body: JSON.stringify({ instructions: text, media_mode: mode }),
       });
       if (!r.ok) throw new Error();
       const d = await r.json();
       setSaved(String(d?.instructions ?? text));
+      setSavedMode(d?.media_mode === 'quality' ? 'quality' : 'economy');
       setState('saved');
     } catch { setState('error'); }
   };
-  const dirty = text !== saved;
+  const dirty = text !== saved || mode !== savedMode;
   return (
     <div className="space-y-2.5 px-3 py-3">
       <div>
         <p className="text-xs font-semibold text-ink">Custom instructions</p>
         <p className="mt-0.5 text-[11px] leading-relaxed text-muted">Rules every agent follows on every task — posts, calendars, images, replies. Write them like you'd brief a new team member.</p>
       </div>
-      <textarea value={text} onChange={(e) => { setText(e.target.value.slice(0, max)); if (state === 'saved') setState('idle'); }} rows={8}
+      <div>
+        <p className="text-[11px] font-semibold text-ink">Images &amp; video</p>
+        <div className="mt-1 grid grid-cols-2 gap-1.5">
+          {([
+            { id: 'economy' as const, title: 'Lowest cost', note: prices ? `~${prices.economy_image} credit${prices.economy_image === 1 ? '' : 's'} an image (free when available)` : 'Cheapest model for each job' },
+            { id: 'quality' as const, title: 'Best quality', note: prices ? `~${prices.quality_image} credits an image (Magnific One)` : 'Magnific One images' },
+          ]).map((o) => (
+            <button key={o.id} type="button" onClick={() => { setMode(o.id); if (state === 'saved') setState('idle'); }}
+              className={`rounded-[10px] border px-2.5 py-2 text-left ${mode === o.id ? 'border-blue bg-pale/60' : 'border-line hover:border-blue'}`}>
+              <span className="block text-[11.5px] font-semibold text-ink">{o.title}{o.id === 'economy' ? ' · default' : ''}</span>
+              <span className="block text-[10px] leading-snug text-muted">{o.note}</span>
+            </button>
+          ))}
+        </div>
+        <p className="mt-1 text-[10px] text-faint">Videos use the lowest-cost model either way{prices ? ` (~${prices.video} credits per 5 s)` : ''}. A model you name in chat always wins.</p>
+      </div>
+      <textarea value={text} onChange={(e) => { setText(e.target.value.slice(0, max)); if (state === 'saved') setState('idle'); }} rows={6}
         placeholder={'e.g.\n• Every post needs an image.\n• We are a brand-new account.\n• Keep captions under 100 words.'}
         disabled={state === 'loading'}
         className="w-full resize-y rounded-[10px] border border-line bg-soft px-2.5 py-2 text-xs leading-relaxed text-ink outline-none focus:border-blue" />

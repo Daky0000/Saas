@@ -1,4 +1,6 @@
 import { randomUUID } from 'crypto';
+import { getMediaMode } from '../chatActions.ts';
+import { dbQuery } from '../../db.ts';
 import type { AutopilotRepository } from './repository.ts';
 import {
   buildBrandAwarePrompt,
@@ -300,6 +302,8 @@ export async function executeAutopilotWorkflow(params: ExecuteWorkflowParams): P
       business,
       brand,
       preferDraftCost: params.preferDraftCost,
+      // The user's media setting: lowest-cost models unless they chose best quality.
+      controlsOverride: { cost_mode: await getMediaMode(dbQuery, params.actorUserId).catch(() => 'economy' as const) },
     });
     await repo.saveCreativeBrief(brief);
   }

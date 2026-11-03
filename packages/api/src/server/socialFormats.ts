@@ -23,8 +23,12 @@ export const PLATFORM_FORMATS: Record<SocialPlatform, SocialFormat[]> = {
   pinterest: ['single_image'],
 };
 
-/** Default image model for social media (Magnific's default) and video models. */
+/** Image models for social media: the lowest-cost one by default, Magnific One on "best quality". */
 export const SOCIAL_IMAGE_MODEL = 'magnific-one';
+/** Lowest-cost paid image model (Magnific Z-Image, 5 Magnific credits ≈ $0.005); the free NVIDIA model is tried before it. */
+export const ECONOMY_IMAGE_MODEL = 'z-image';
+/** Next cheapest if Z-Image fails (Flux.1, ≈ $0.01). */
+export const ECONOMY_IMAGE_FALLBACK = 'flux-dev';
 export const SOCIAL_VIDEO_MODEL_FROM_IMAGE = 'kling-v2-6-pro';
 export const SOCIAL_VIDEO_MODEL_FROM_TEXT = 'ltx-2-pro';
 /** Social images: Magnific One at 2k, medium quality (Magnific's standard finished image). */
@@ -34,7 +38,12 @@ export const SOCIAL_VIDEO_SECONDS = 5;
 // Prices are the provider cost × 1.54, in credits (server/aiPricing.ts).
 /** Writing one post: free models normally; priced for the worst case on the paid fallback, never below 2. */
 export function socialCopyCredits(): number { return Math.max(2, creditsForUsd(POST_COPY_WORST_USD)); }
-export function socialImageCredits(): number { return creditsForMagnific(magnificImageCost(SOCIAL_IMAGE_MODEL, SOCIAL_IMAGE_OPTS)); }
+/** One image as the estimate shows it: the planned model's price (a free model, when used, is not charged). */
+export function socialImageCredits(mode: 'economy' | 'quality' = 'economy'): number {
+  return mode === 'quality'
+    ? creditsForMagnific(magnificImageCost(SOCIAL_IMAGE_MODEL, SOCIAL_IMAGE_OPTS))
+    : creditsForMagnific(magnificImageCost(ECONOMY_IMAGE_MODEL));
+}
 /** A video is animated from its cover image, so a reel costs a cover image plus this. */
 export function socialVideoCredits(): number { return creditsForMagnific(magnificVideoCost(SOCIAL_VIDEO_MODEL_FROM_IMAGE, { duration: SOCIAL_VIDEO_SECONDS, resolution: '1080p' })); }
 
@@ -84,9 +93,9 @@ export function clampSlides(slides?: number): number {
   return Math.min(MAX_SLIDES, Math.max(MIN_SLIDES, n));
 }
 
-export function postCredits(format: SocialFormat, slides?: number, withImage?: boolean): number {
+export function postCredits(format: SocialFormat, slides?: number, withImage?: boolean, mode: 'economy' | 'quality' = 'economy'): number {
   const m = mediaPlan(format, slides, withImage);
-  return socialCopyCredits() + m.images * socialImageCredits() + m.videos * socialVideoCredits();
+  return socialCopyCredits() + m.images * socialImageCredits(mode) + m.videos * socialVideoCredits();
 }
 
 export function aspectRatioFor(platform: SocialPlatform, format: SocialFormat): string {

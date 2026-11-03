@@ -536,6 +536,13 @@ export function routeModelForBrief(input: RouteTaskInput): RoutedModelSelection 
         ? ['magnific:nano-banana-pro', 'openai:gpt-image-2.5-sunburst']
         : ['magnific:magnific-one', 'openai:gpt-image-2.5-sunburst', 'openai:gpt-image-2.5-flare'];
 
+  // Lowest cost first unless the brief asks for best quality: the same order,
+  // re-sorted by what each model costs us (stable, so ties keep their rank).
+  if (input.controls.cost_mode !== 'quality') {
+    const cost = (id: string) => byId.get(id)?.provider_cost_usd ?? Number.POSITIVE_INFINITY;
+    preference.sort((a, b) => cost(a) - cost(b));
+  }
+
   const picked = firstSelectable(preference, input);
   if (!picked.entry) {
     const message = isVideo

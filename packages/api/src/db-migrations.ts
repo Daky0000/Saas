@@ -5287,6 +5287,7 @@ export async function runIncrementalUpgradeMigrations(pool: Pool): Promise<void>
       instructions TEXT NOT NULL DEFAULT '',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE user_custom_instructions ADD COLUMN IF NOT EXISTS media_mode TEXT NOT NULL DEFAULT 'economy';
   `).catch(() => undefined);
 
   await pool.query(`

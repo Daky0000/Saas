@@ -106,8 +106,9 @@ test('pricing: every AI cost is charged at cost × 1.54 or more, at the cheapest
   for (const q of ['medium', 'high']) for (const r of ['1k', '2k', '4k']) check(pricing.magnificOneCost({ quality: q, resolution: r }) * 0.001, `magnific-one ${q} ${r}`);
   for (const model of ['seedance-2-5', 'kling-v2-6-pro', 'ltx-2-pro']) for (const d of [5, 10, 15]) check(pricing.magnificVideoCost(model, { duration: d }) * 0.001, `${model} ${d}s`);
   check(pricing.magnificLipSyncCost() * 0.001, 'lip sync');
-  // Exact values for the social defaults: Magnific One 2k medium (180) and Kling 2.6 5 s (225).
-  assert.equal(sf.socialImageCredits(), Math.ceil((0.18 * 1.54) / v));
+  // Exact values for the social defaults: lowest cost = Magnific Z-Image (5 ≈ $0.005); best quality = Magnific One 2k medium (180); Kling 2.6 5 s (225).
+  assert.equal(sf.socialImageCredits(), Math.ceil((0.005 * 1.54) / v));
+  assert.equal(sf.socialImageCredits('quality'), Math.ceil((0.18 * 1.54) / v));
   assert.equal(sf.socialVideoCredits(), Math.ceil((0.225 * 1.54) / v));
   assert.equal(pricing.creditsForUsd(0), 0);
 });
@@ -117,4 +118,16 @@ test('pricing: the estimate shown for a Magnific tool is what it charges, and fo
   const ten = ca.estimateToolCredits('magnific_generate_video', { model: 'kling-v2-6-pro', duration: 10 })!.credits;
   assert.ok(ten >= five * 2 - 1 && ten <= five * 2 + 1);
   assert.equal(ca.estimateToolCredits('magnific_one_generate', { quality: 'normal' })!.credits, pricing.creditsForMagnific(180));
+});
+
+test('media setting: lowest cost by default — cheapest image and video models unless a model is named or quality is chosen', () => {
+  assert.equal(ca.defaultImageModel({}), 'z-image');
+  assert.equal(ca.defaultImageModel({ media_mode: 'quality' }), 'magnific-one');
+  assert.equal(ca.defaultImageModel({ model: 'mystic' }), 'mystic', 'a model the user names wins');
+  assert.equal(ca.defaultVideoModel({}), 'kling-v2-6-pro');
+  assert.equal(ca.defaultVideoModel({ image_url: 'x' }), 'kling-v2-6-pro');
+  const economy = ca.estimateToolCredits('create_posts_batch', { posts: [{ platform: 'instagram', format: 'carousel', slides: 5, topic: 't' }] })!.credits;
+  const quality = ca.estimateToolCredits('create_posts_batch', { media_mode: 'quality', posts: [{ platform: 'instagram', format: 'carousel', slides: 5, topic: 't' }] })!.credits;
+  assert.ok(economy < quality / 5, `economy ${economy} vs quality ${quality}`);
+  assert.equal(ca.normalizeMediaMode('anything'), 'economy');
 });

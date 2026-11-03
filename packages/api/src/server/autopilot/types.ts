@@ -418,6 +418,8 @@ export interface ContentStrategyRecord {
 }
 
 export interface CreativeControls {
+  /** Which model wins when none is requested: the lowest-cost one (default) or the best-quality one. */
+  cost_mode?: 'economy' | 'quality';
   logo_policy: LogoPolicy;
   text_in_image: TextInImagePolicy;
   reference_fidelity: ReferenceFidelity;

@@ -13,6 +13,7 @@ import { startSpan } from './aiTrace.ts';
 import { nvidiaAgentLoop, nvidiaChat, nvidiaImage } from './nvidiaModels.ts';
 import { buildSharedAgentContext, invalidateSharedContext, recordAgentInsight } from './agentSharedContext.ts';
 import { aiChatLimiter } from '../middleware/rateLimiter.ts';
+import { creditsForMagnific, magnificImageCost } from './aiPricing.ts';
 import { clearCalendarCacheForUser } from '../link-metadata.ts';
 import { decryptPlatformConfig } from '../integration-helpers.ts';
 import { callMagnificMcpTool } from './mcpRoutes.ts';
@@ -30,12 +31,13 @@ import {
 } from './magnificRoutes.ts';
 import { durableMediaUrl, durableMediaUrls, getMediaStorage, storeMediaBytes } from './mediaStore.ts';
 import {
-  socialImageCredits, PLATFORM_LABEL, FORMAT_LABEL, socialCopyCredits, SOCIAL_IMAGE_MODEL, SOCIAL_IMAGE_OPTS, SOCIAL_VIDEO_MODEL_FROM_IMAGE, socialVideoCredits,
+  socialImageCredits, PLATFORM_LABEL, FORMAT_LABEL, socialCopyCredits, SOCIAL_IMAGE_MODEL, SOCIAL_IMAGE_OPTS, ECONOMY_IMAGE_MODEL, ECONOMY_IMAGE_FALLBACK, SOCIAL_VIDEO_MODEL_FROM_IMAGE, socialVideoCredits,
   aspectRatioFor, bestTimesGuide, isVideoFormat, validTimeZone, parsePiece, pieceSchema, publishText, slidePrompt, writingRules,
 } from './socialFormats.ts';
 import {
   BATCH_MAX_POSTS, CUSTOM_INSTRUCTIONS_MAX, batchPosts, claimPendingAction, createPendingAction, customInstructionsBlock,
   ensureChatTables, estimateToolCredits, finishPendingAction, getCustomInstructions, sanitizeSessionMessages, saveCustomInstructions,
+  defaultImageModel, defaultVideoModel, getMediaMode, mediaModeBlock, normalizeMediaMode, saveMediaMode, type MediaMode,
 } from './chatActions.ts';
 
 const OUT_OF_CREDITS_MSG = "You need more AI credits. Buy credits without changing your plan, or wait for your monthly allowance reset.";
@@ -1048,7 +1050,7 @@ export function registerAIChatRoutes({
       case 'magnific_generate_image': {
         const magnificKey = await getMagnificApiKey(pool as any);
         if (!magnificKey) return { success: false, error: 'Magnific API key is not configured in Admin → Magnific AI.' };
-        const modelKey = input?.model && MAGNIFIC_IMAGE_MODELS[input.model] ? input.model : 'magnific-one';
+        const modelKey = defaultImageModel(input);
         // The same price the estimate card showed: Magnific's cost × 1.54.
         const creditCost = estimateToolCredits(name, input)?.credits ?? 0;
         const r = await magnificGenerateImage(
@@ -1098,7 +1100,7 @@ export function registerAIChatRoutes({
       case 'magnific_generate_video': {
         const magnificKey = await getMagnificApiKey(pool as any);
         if (!magnificKey) return { success: false, error: 'Magnific API key is not configured in Admin → Magnific AI.' };
-        const modelKey = input?.model && MAGNIFIC_VIDEO_MODELS[input.model] ? input.model : (input?.image_url ? 'kling-v2-6-pro' : 'ltx-2-pro');
+        const modelKey = defaultVideoModel(input);
         // The same price the estimate card showed: Magnific's cost × 1.54.
         const creditCost = estimateToolCredits(name, input)?.credits ?? 0;
         const r = await magnificGenerateVideo({ ...input, model: modelKey }, magnificKey);
@@ -1277,9 +1279,10 @@ export function registerAIChatRoutes({
       }
 
       status('Checking your workspace');
-      const [saasContext, customInstructions] = await Promise.all([
+      const [saasContext, customInstructions, mediaMode] = await Promise.all([
         getUserSaaSContext(auth.userId),
         getCustomInstructions(dbQuery, auth.userId),
+        getMediaMode(dbQuery, auth.userId),
       ]);
 
       // Guardrails for this turn. Memories (some come from a scraped website)
@@ -1299,6 +1302,8 @@ export function registerAIChatRoutes({
         // Anything that spends credits is priced and parked; the user runs it from the estimate card.
         // Posts are scheduled in the user's own timezone.
         if (name === 'create_posts_batch' && args && typeof args === 'object') args = { ...args, timezone: userTz };
+        // Estimates and runs use the user's media setting (lowest cost by default).
+        if ((name === 'create_posts_batch' || name.startsWith('magnific_')) && args && typeof args === 'object') args = { ...args, media_mode: mediaMode };
         const estimate = estimateToolCredits(name, args);
         if (estimate && name === 'magnific_space_or_flow') {
           // A Space is priced node by node from its own plan.
@@ -1330,7 +1335,7 @@ export function registerAIChatRoutes({
       // The user's custom instructions lead the turn's context: they apply to every task.
       const localNow = new Intl.DateTimeFormat('en-GB', { timeZone: userTz, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date());
       const timeBlock = `## TIME AND SCHEDULING\nThe user's timezone: ${userTz}. Their local time now: ${localNow}.\nEvery post is SCHEDULED (never left as a draft) unless the user says otherwise. Pick each post's day and time yourself for the best reach; give scheduled_at as ISO 8601 with the user's UTC offset.\n${bestTimesGuide(userTz)}`;
-      let dynamicPrompt = [customInstructionsBlock(customInstructions), timeBlock, userMemoryBlock, saasContext ? fence('workspace data', saasContext, 8000) : '', skillsPrompt].filter(Boolean).join('\n\n');
+      let dynamicPrompt = [customInstructionsBlock(customInstructions), mediaModeBlock(mediaMode), timeBlock, userMemoryBlock, saasContext ? fence('workspace data', saasContext, 8000) : '', skillsPrompt].filter(Boolean).join('\n\n');
       const history = fitHistory(messages.slice(-16).map((m) => ({ role: m.role === 'assistant' ? 'assistant' as const : 'user' as const, content: String(m.content || '') })));
 
       // Streamed text is checked as it accumulates: once the canary from the
@@ -1554,16 +1559,27 @@ export function registerAIChatRoutes({
   router.get('/ai/custom-instructions', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
-    res.json({ success: true, instructions: await getCustomInstructions(dbQuery, auth.userId), max: CUSTOM_INSTRUCTIONS_MAX });
+    const [instructions, mediaMode] = await Promise.all([getCustomInstructions(dbQuery, auth.userId), getMediaMode(dbQuery, auth.userId)]);
+    res.json({
+      success: true, instructions, media_mode: mediaMode, max: CUSTOM_INSTRUCTIONS_MAX,
+      // What each choice costs in credits right now (cost × 1.54), for the setting's labels.
+      prices: { economy_image: socialImageCredits('economy'), quality_image: socialImageCredits('quality'), video: socialVideoCredits() },
+    });
   });
 
   router.put('/ai/custom-instructions', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     try {
-      const saved = await saveCustomInstructions(dbQuery, auth.userId, String((req.body as any)?.instructions ?? ''));
+      const body = (req.body ?? {}) as any;
+      const saved = body.instructions !== undefined
+        ? await saveCustomInstructions(dbQuery, auth.userId, String(body.instructions ?? ''))
+        : await getCustomInstructions(dbQuery, auth.userId);
+      const mediaMode = body.media_mode !== undefined
+        ? await saveMediaMode(dbQuery, auth.userId, normalizeMediaMode(body.media_mode))
+        : await getMediaMode(dbQuery, auth.userId);
       invalidateSharedContext(auth.userId);
-      res.json({ success: true, instructions: saved });
+      res.json({ success: true, instructions: saved, media_mode: mediaMode });
     } catch (err) {
       logger.error({ err }, 'custom_instructions_save_failed');
       res.status(500).json({ success: false, error: 'Could not save your instructions — please try again.' });
@@ -1695,11 +1711,14 @@ export function registerAIChatRoutes({
     const key = resolveTextKey(aiCfg);
     if (!key) throw new AIUnavailableError('No AI is configured — add the free NVIDIA key in Admin → NVIDIA, or a paid key in Admin → AI Assistant.');
     const model = aiCfg.provider === 'google' ? resolveGeminiModel(aiCfg.model) : FAST_MODEL;
-    const [context, instructions, magnificKey] = await Promise.all([
+    const [context, instructions, magnificKey, savedMode] = await Promise.all([
       buildSharedAgentContext(userId).catch(() => ''),
       getCustomInstructions(dbQuery, userId),
       getMagnificApiKey(pool as any).catch(() => null),
+      getMediaMode(dbQuery, userId),
     ]);
+    // The setting at the time the estimate was shown (falls back to the saved one).
+    const mediaMode: MediaMode = args?.media_mode ? normalizeMediaMode(args.media_mode) : savedMode;
     const tone = String(args?.tone || '').slice(0, 200);
     const system = [
       'You are Daky, a senior social media strategist and copywriter. You write ONE post natively for ONE platform — the way the best creators on that platform write — in the user\'s brand voice, ready to publish. Never write a blog article.',
@@ -1726,18 +1745,33 @@ export function registerAIChatRoutes({
     };
 
     /** One image: Magnific (charged) when configured, else the free NVIDIA model (not charged). Null when neither can draw. */
-    const drawImage = async (prompt: string, aspect: string, refs: string[]): Promise<{ url: string; charged: number } | null> => {
-      if (magnificKey) {
-        const r = await magnificGenerateImage(SOCIAL_IMAGE_MODEL, prompt, aspect, magnificKey, undefined, { ...SOCIAL_IMAGE_OPTS, ...(refs.length ? { reference_images: refs.slice(0, 3) } : {}) });
-        if (r.url) return { url: await durableMediaUrl(r.url, userId), charged: socialImageCredits() };
-        logger.warn({ err: r.error }, 'chat_batch_image_failed');
-      }
-      if (getMediaStorage()) {
-        const [w, h] = aspect === '9:16' ? [768, 1344] : aspect === '4:5' ? [1024, 1280] : aspect === '16:9' ? [1344, 768] : aspect === '2:3' ? [832, 1216] : [1024, 1024];
-        const drawn = await nvidiaImage({ prompt, width: w, height: h }).catch(() => null);
-        if (drawn) return { url: await storeMediaBytes(drawn.bytes, drawn.mimeType, userId, { jpeg: true } as any), charged: 0 };
-      }
+    /**
+     * One image, cheapest first (or Magnific One first on "best quality").
+     * Charged at the model actually used × 1.54; the free NVIDIA model is not charged.
+     */
+    const tryMagnific = async (model: string, opts: Record<string, unknown>, prompt: string, aspect: string): Promise<{ url: string; charged: number } | null> => {
+      if (!magnificKey) return null;
+      const r = await magnificGenerateImage(model, prompt, aspect, magnificKey, undefined, opts as any).catch((err) => ({ url: null, error: String(err) } as any));
+      if (r?.url) return { url: await durableMediaUrl(r.url, userId), charged: creditsForMagnific(magnificImageCost(model, opts as any)) };
+      logger.warn({ err: r?.error, model }, 'chat_batch_image_failed');
       return null;
+    };
+    const tryFree = async (prompt: string, aspect: string): Promise<{ url: string; charged: number } | null> => {
+      if (!getMediaStorage()) return null;
+      const [w, h] = aspect === '9:16' ? [768, 1344] : aspect === '4:5' ? [1024, 1280] : aspect === '16:9' ? [1344, 768] : aspect === '2:3' ? [832, 1216] : [1024, 1024];
+      const drawn = await nvidiaImage({ prompt, width: w, height: h }).catch(() => null);
+      return drawn ? { url: await storeMediaBytes(drawn.bytes, drawn.mimeType, userId, { jpeg: true } as any), charged: 0 } : null;
+    };
+    const drawImage = async (prompt: string, aspect: string, refs: string[]): Promise<{ url: string; charged: number } | null> => {
+      const withRefs = refs.length ? { reference_images: refs.slice(0, 3) } : {};
+      if (mediaMode === 'quality') {
+        return (await tryMagnific(SOCIAL_IMAGE_MODEL, { ...SOCIAL_IMAGE_OPTS, ...withRefs }, prompt, aspect))
+          ?? (await tryMagnific(ECONOMY_IMAGE_MODEL, withRefs, prompt, aspect))
+          ?? (await tryFree(prompt, aspect));
+      }
+      return (await tryFree(prompt, aspect))
+        ?? (await tryMagnific(ECONOMY_IMAGE_MODEL, withRefs, prompt, aspect))
+        ?? (await tryMagnific(ECONOMY_IMAGE_FALLBACK, {}, prompt, aspect));
     };
 
     const worker = async () => {
@@ -1802,7 +1836,7 @@ export function registerAIChatRoutes({
               ? [[piece.image_prompt || item.topic, item.visual, isVideoFormat(item.format) ? 'Vertical cover frame for a short video.' : ''].filter(Boolean).join('. ')]
               : [];
           for (let k = 0; k < prompts.length; k++) {
-            if (magnificKey && await balance() < socialImageCredits()) { notes.push('Ran out of credits before every image was made.'); break; }
+            if (magnificKey && await balance() < socialImageCredits(mediaMode)) { notes.push('Ran out of credits before every image was made.'); break; }
             await setItem(index, { status: 'media', progress: prompts.length > 1 ? `Image ${k + 1} of ${prompts.length}` : 'Creating the image', post: { ...post } });
             const refs = item.format === 'carousel' && post.media_assets[0]?.url ? [post.media_assets[0].url] : [];
             const img = await drawImage(prompts[k], aspect, refs).catch(() => null);

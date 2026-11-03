@@ -1,5 +1,6 @@
 import express from 'express';
 import { creditsForMagnific, magnificAudioCost, magnificImageCost, magnificLipSyncCost, magnificVideoCost } from './aiPricing.ts';
+import { getMediaMode } from './chatActions.ts';
 import { FAST_MODEL, recordAIUsage, hasAICredits, chargeAICredits, callAINonStreaming, resolveTextKey } from '../ai-helpers.ts';
 import type { Router, Response } from 'express';
 import type { Request } from '../types/http.ts';
@@ -171,13 +172,13 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
                 const { rows: magCfg } = await dbQuery(`SELECT config FROM platform_configs WHERE platform = 'magnific' LIMIT 1`).catch(() => ({ rows: [] as any[] }));
                 const magnificKey = decryptPlatformConfig(magCfg[0]?.config)?.apiKey || process.env.MAGNIFIC_API_KEY || process.env.FREEPIK_API_KEY || '';
                 if (magnificKey && imagePrompt) {
-                  const magModel = String(cfg.model || 'magnific-one');
-                  const genRes = await magnificGenerateImage(magModel, imagePrompt, String(cfg.aspect_ratio || '16:9'), magnificKey, undefined, {
-                    mode: cfg.mode || 'quality',
-                    resolution: cfg.resolution || '2k',
-                    tiles: cfg.tiles,
-                    reference_images: cfg.reference_images,
-                  });
+                  // A model chosen on the node wins; otherwise the user's media setting (lowest cost by default).
+                  const magModel = String(cfg.model || ((await getMediaMode(dbQuery, userId)) === 'quality' ? 'magnific-one' : 'z-image'));
+                  // Magnific One options only for Magnific One: any `mode` routes the call to Magnific One.
+                  const imgOpts = magModel === 'magnific-one'
+                    ? { mode: cfg.mode || 'quality', quality: cfg.quality || 'medium', resolution: cfg.resolution || '2k', tiles: cfg.tiles, reference_images: cfg.reference_images }
+                    : { resolution: cfg.resolution, reference_images: cfg.reference_images };
+                  const genRes = await magnificGenerateImage(magModel, imagePrompt, String(cfg.aspect_ratio || '16:9'), magnificKey, undefined, imgOpts);
                   if (genRes.url && !genRes.error) {
                     triggerData.featured_image = genRes.url;
                     triggerData.image_url = genRes.url;
@@ -185,7 +186,7 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
                     if (postId) {
                       await dbQuery(`UPDATE blog_posts SET featured_image = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3`, [genRes.url, postId, userId]).catch(() => undefined);
                     }
-                    await chargeAICredits(userId, creditsForMagnific(magnificImageCost(magModel, { mode: cfg.mode, quality: cfg.quality, resolution: cfg.resolution || '2k' })), 'workflow_magnific_image', { model: magModel });
+                    await chargeAICredits(userId, creditsForMagnific(magnificImageCost(magModel, imgOpts as any)), 'workflow_magnific_image', { model: magModel });
                     addLog(node.id, `Generated Magnific (${magModel}) image: ${genRes.url}`);
                   } else {
                     addLog(node.id, `Magnific image fallback to prompt notification (${genRes.error || 'no url'})`);

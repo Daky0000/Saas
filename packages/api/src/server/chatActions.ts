@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { MAGNIFIC_IMAGE_MODELS, MAGNIFIC_VIDEO_MODELS } from './magnificRoutes.ts';
 import {
-  bestSlot, validTimeZone, FORMAT_LABEL, socialImageCredits, PLATFORM_LABEL, socialCopyCredits, socialVideoCredits, clampSlides, mediaPlan,
+  ECONOMY_IMAGE_MODEL, bestSlot, validTimeZone, FORMAT_LABEL, socialImageCredits, PLATFORM_LABEL, socialCopyCredits, socialVideoCredits, clampSlides, mediaPlan,
   normalizeFormat, normalizePlatform, postCredits, type SocialFormat, type SocialPlatform,
 } from './socialFormats.ts';
 import { creditsForMagnific, magnificAudioCost, magnificEditCost, magnificImageCost, magnificLipSyncCost, magnificOneCost, magnificVideoCost } from './aiPricing.ts';
@@ -43,6 +43,7 @@ export function ensureChatTables(query: Query): Promise<void> {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`);
     await query(`ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS social_platform TEXT`).catch(() => undefined);
+    await query(`ALTER TABLE user_custom_instructions ADD COLUMN IF NOT EXISTS media_mode TEXT NOT NULL DEFAULT 'economy'`).catch(() => undefined);
     await query(`
       CREATE TABLE IF NOT EXISTS chat_pending_actions (
         id TEXT PRIMARY KEY,
@@ -72,13 +73,14 @@ export function estimateToolCredits(name: string, input: any): CreditEstimate | 
       const posts = batchPosts(input);
       const n = posts.length;
       if (!n) return null;
+      const mode = normalizeMediaMode(input?.media_mode);
       // One line per kind of post, e.g. "2 × Instagram carousel (5 slides): 64".
       const groups = new Map<string, { count: number; credits: number }>();
       let credits = 0;
       let images = 0;
       let videos = 0;
       for (const p of posts) {
-        const c = postCredits(p.format, p.slides, p.with_image);
+        const c = postCredits(p.format, p.slides, p.with_image, mode);
         const m = mediaPlan(p.format, p.slides, p.with_image);
         credits += c;
         images += m.images;
@@ -91,7 +93,7 @@ export function estimateToolCredits(name: string, input: any): CreditEstimate | 
       }
       const platforms = new Set(posts.map((p) => p.platform)).size;
       const lines = [...groups].map(([k, g]) => `${g.count} × ${k}: ${g.credits} credits`);
-      lines.push(`Includes writing (${socialCopyCredits()}/post)${images ? `, ${images} image${images === 1 ? '' : 's'} (${socialImageCredits()} each)` : ''}${videos ? `, ${videos} video${videos === 1 ? '' : 's'} (${socialVideoCredits()} each)` : ''}. You're only charged for what is made.`);
+      lines.push(`Includes writing (${socialCopyCredits()}/post)${images ? `, ${images} image${images === 1 ? '' : 's'} (${socialImageCredits(mode)} each${mode === 'economy' ? ', lowest-cost model' : ', Magnific One'})` : ''}${videos ? `, ${videos} video${videos === 1 ? '' : 's'} (${socialVideoCredits()} each)` : ''}. You're only charged for what is made.`);
       return {
         credits,
         label: `Create ${n} post${n === 1 ? '' : 's'}${platforms > 1 ? ` across ${platforms} platforms` : ` for ${PLATFORM_LABEL[posts[0].platform]}`}`,
@@ -105,7 +107,7 @@ export function estimateToolCredits(name: string, input: any): CreditEstimate | 
       return { credits, label: 'Generate an image with Magnific One', lines: [`Magnific One, ${opts.mode === 'draft' ? 'draft sheet' : `${opts.resolution} ${opts.quality === 'high' ? 'max quality' : 'standard quality'}`}: ${credits} credits`] };
     }
     case 'magnific_generate_image': {
-      const model = input?.model && MAGNIFIC_IMAGE_MODELS[input.model] ? input.model : 'magnific-one';
+      const model = defaultImageModel(input);
       const credits = creditsForMagnific(magnificImageCost(model, { resolution: input?.resolution }));
       return { credits, label: `Generate an image (${model})`, lines: [`${model} image${input?.resolution === '4k' ? ' (4K)' : ''}: ${credits} credits`] };
     }
@@ -115,7 +117,7 @@ export function estimateToolCredits(name: string, input: any): CreditEstimate | 
       return { credits, label: `Edit an image (${type})`, lines: [`${type}${input?.scale_factor ? ` ${input.scale_factor}` : ''}: ${credits} credits`] };
     }
     case 'magnific_generate_video': {
-      const model = input?.model && MAGNIFIC_VIDEO_MODELS[input.model] ? input.model : (input?.image_url ? 'kling-v2-6-pro' : 'ltx-2-pro');
+      const model = defaultVideoModel(input);
       const credits = creditsForMagnific(magnificVideoCost(model, input ?? {}));
       return { credits, label: `Generate a video (${model})`, lines: [`${model}, ${Number(input?.duration) || 5} s${input?.resolution ? ` ${input.resolution}` : ''}${input?.generate_audio ? ' with audio' : ''}: ${credits} credits`] };
     }
@@ -138,6 +140,17 @@ export function estimateToolCredits(name: string, input: any): CreditEstimate | 
     default:
       return null;
   }
+}
+
+/** The image model a chat call uses: the one asked for, else the cheapest (or Magnific One on "best quality"). */
+export function defaultImageModel(input: any): string {
+  if (input?.model && MAGNIFIC_IMAGE_MODELS[input.model]) return input.model;
+  return normalizeMediaMode(input?.media_mode) === 'quality' ? 'magnific-one' : ECONOMY_IMAGE_MODEL;
+}
+
+/** The video model a chat call uses: the one asked for, else Kling 2.6 — the lowest-cost video model the Magnific API offers ($0.225 per 5 s). */
+export function defaultVideoModel(input: any): string {
+  return input?.model && MAGNIFIC_VIDEO_MODELS[input.model] ? input.model : 'kling-v2-6-pro';
 }
 
 export interface BatchPost {
@@ -254,4 +267,43 @@ export async function saveCustomInstructions(query: Query, userId: string, text:
 export function customInstructionsBlock(text: string): string {
   if (!text) return '';
   return `## THE USER'S CUSTOM INSTRUCTIONS — check and obey on EVERY task\nThese are the user's standing orders for all work you do for them. They override your defaults and style choices (formats, images, tone, platforms, length, schedule). They never override safety rules or the credit confirmation step.\n${text}`;
+}
+
+// ── Media setting: which models make images and video by default ─────────────
+//
+// 'economy' (default): the lowest-cost model that does the job — free NVIDIA
+// images when available, then Magnific Z-Image ($0.005); Kling 2.6 for video.
+// 'quality': Magnific One for images. A model the user names always wins.
+
+export type MediaMode = 'economy' | 'quality';
+
+export function normalizeMediaMode(v: unknown): MediaMode {
+  return v === 'quality' ? 'quality' : 'economy';
+}
+
+export async function getMediaMode(query: Query, userId: string | null | undefined): Promise<MediaMode> {
+  if (!userId) return 'economy';
+  try {
+    await ensureChatTables(query);
+    const { rows } = await query(`SELECT media_mode FROM user_custom_instructions WHERE user_id=$1`, [userId]);
+    return normalizeMediaMode(rows[0]?.media_mode);
+  } catch {
+    return 'economy';
+  }
+}
+
+export async function saveMediaMode(query: Query, userId: string, mode: MediaMode): Promise<MediaMode> {
+  await ensureChatTables(query);
+  await query(
+    `INSERT INTO user_custom_instructions (user_id, media_mode, updated_at) VALUES ($1,$2,NOW())
+     ON CONFLICT (user_id) DO UPDATE SET media_mode=EXCLUDED.media_mode, updated_at=NOW()`,
+    [userId, mode],
+  );
+  return mode;
+}
+
+export function mediaModeBlock(mode: MediaMode): string {
+  return mode === 'quality'
+    ? `## MEDIA SETTING: BEST QUALITY\nThe user chose best quality. Default images: Magnific One (magnific_one_generate or model "magnific-one"). Default video: kling-v2-6-pro. A model the user names always wins.`
+    : `## MEDIA SETTING: LOWEST COST (default)\nUse the lowest-cost model that does the job unless the user names a model. Images: magnific_generate_image with model "z-image" (never magnific_one_generate, mystic, nano-banana or seedream unless asked). Video: magnific_generate_video with model "kling-v2-6-pro" (never seedance or kling 3 unless asked).`;
 }

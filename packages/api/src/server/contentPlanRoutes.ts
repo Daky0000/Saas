@@ -1,5 +1,6 @@
 import express from 'express';
-import { creditsForMagnific, magnificOneCost } from './aiPricing.ts';
+import { GOOGLE_IMAGE_USD, creditsForMagnific, creditsForUsd, magnificImageCost, magnificOneCost } from './aiPricing.ts';
+import { getMediaMode, type MediaMode } from './chatActions.ts';
 import type { Router, Response } from 'express';
 import type { Request } from '../types/http.ts';
 import type { Pool } from 'pg';
@@ -11,7 +12,7 @@ import { dbQuery } from '../db.ts';
 import { AIUnavailableError, aiErrorDetail, getAIConfig, resolveTextKey, callAINonStreaming, hasAICredits, chargeAICredits, ensureCreditAccount, FAST_MODEL, GEMINI_MODELS } from '../ai-helpers.ts';
 import { buildSharedAgentContext } from './agentSharedContext.ts';
 import { magnificOneGenerate, magnificGenerateImage } from './magnificRoutes.ts';
-import { DEFAULT_OPENAI_IMAGE_MODEL } from './openaiRoutes.ts';
+import { DEFAULT_OPENAI_IMAGE_MODEL, OPENAI_IMAGE_MODELS } from './openaiRoutes.ts';
 import { durableMediaUrl, getMediaStorage, storeMediaBytes } from './mediaStore.ts';
 import { nvidiaImage, nvidiaReady } from './nvidiaModels.ts';
 import { openCheckpoint } from './aiCheckpoints.ts';
@@ -54,8 +55,10 @@ export const SOCIAL_PLATFORMS = ['facebook', 'instagram', 'linkedin', 'twitter',
 // underpricing a plan.
 const RATE_COPY_PER_POST = 2;
 const RATE_QA_PER_POST = 1;
-/** A featured image: Magnific One, 2k medium (180 Magnific credits) × 1.54 — see server/aiPricing.ts. */
-const ratePerImage = () => creditsForMagnific(magnificOneCost({ quality: 'medium', resolution: '2k' }));
+/** A featured image, priced for planning: the lowest-cost paid model by default (Magnific Z-Image), Magnific One on "best quality" — cost × 1.54 (server/aiPricing.ts). */
+const ratePerImage = (mode: MediaMode = 'economy') => mode === 'quality'
+  ? creditsForMagnific(magnificOneCost({ quality: 'medium', resolution: '2k' }))
+  : creditsForMagnific(magnificImageCost('z-image'));
 
 // Pieces per day a plan may ask for. The DB constraint matches.
 export const MAX_PLAN_PER_DAY = 48;
@@ -132,34 +135,43 @@ async function storeGeneratedImage(base64Data: string, mimeType: string): Promis
   return `data:${mimeType};base64,${base64Data}`;
 }
 
-export async function generateFeaturedImage(prompt: string): Promise<string | null> {
-  // 1. Primary: Magnific One / Magnific Mystic
+/**
+ * A featured image and the credits it costs (provider price × 1.54; the free
+ * NVIDIA model costs nothing). 'economy' (the default) tries the cheapest
+ * first; 'quality' starts with Magnific One.
+ */
+export async function generateFeaturedImage(prompt: string, mode: MediaMode = 'economy'): Promise<{ url: string; credits: number; model: string } | null> {
   const magnificKey = (await getPlatformKey('magnific', 'apiKey')) || (await getPlatformKey('freepik', 'apiKey')) || process.env.MAGNIFIC_API_KEY || process.env.FREEPIK_API_KEY;
-  if (magnificKey) {
-    try {
+  const googleKey = (await getPlatformKey('google')) || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+  const openaiKey = (await getPlatformKey('openai')) || process.env.OPENAI_API_KEY;
+  type Attempt = { model: string; run: () => Promise<string | null>; credits: () => number };
+
+  const magnific = (model: string, opts: Record<string, unknown> = {}): Attempt => ({
+    model: `magnific:${model}`,
+    credits: () => creditsForMagnific(magnificImageCost(model, opts as any)),
+    run: async () => {
+      if (!magnificKey) return null;
       // Magnific links expire; the piece keeps a copy in object storage.
-      const magOne = await magnificOneGenerate({ prompt, mode: 'quality', quality: 'medium', resolution: '2k', aspect_ratio: '1:1' }, magnificKey);
-      if (magOne.url && !magOne.error) return durableMediaUrl(magOne.url, 'content-plan', { jpeg: true });
-      const magMystic = await magnificGenerateImage('mystic', prompt, '1:1', magnificKey);
-      if (magMystic.url && !magMystic.error) return durableMediaUrl(magMystic.url, 'content-plan', { jpeg: true });
-    } catch (e) {
-      logger.warn({ e: e instanceof Error ? e.message : e }, 'content_plan_magnific_image_failed');
-    }
-  }
-  // 2. Free: NVIDIA FLUX (same image ladder as Dakyworld OS), before any paid fallback.
-  if (await nvidiaReady()) {
-    try {
+      const r = model === 'magnific-one'
+        ? await magnificOneGenerate({ prompt, mode: 'quality', quality: 'medium', resolution: '2k', aspect_ratio: '1:1' }, magnificKey)
+        : await magnificGenerateImage(model, prompt, '1:1', magnificKey);
+      return r.url && !r.error ? durableMediaUrl(r.url, 'content-plan', { jpeg: true }) : null;
+    },
+  });
+  const free: Attempt = {
+    model: 'nvidia:flux.2-klein (free)',
+    credits: () => 0,
+    run: async () => {
+      if (!(await nvidiaReady())) return null;
       const drawn = await nvidiaImage({ prompt, width: 1024, height: 1024 });
       return storeGeneratedImage(drawn.bytes.toString('base64'), drawn.mimeType);
-    } catch (e) {
-      logger.warn({ e: e instanceof Error ? e.message : e }, 'content_plan_nvidia_image_failed');
-    }
-  }
-  // 3. Paid: Gemini image
-  // Admin-configured key wins; env is fallback only
-  const googleKey = (await getPlatformKey('google')) || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
-  if (googleKey) {
-    try {
+    },
+  };
+  const gemini: Attempt = {
+    model: 'google:gemini-2.5-flash-image',
+    credits: () => creditsForUsd(GOOGLE_IMAGE_USD['google-gemini-flash']),
+    run: async () => {
+      if (!googleKey) return null;
       const resp = await axios.post(
         `${GOOGLE_BASE}/models/gemini-2.5-flash-image:generateContent`,
         { contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseModalities: ['IMAGE', 'TEXT'] } },
@@ -167,21 +179,35 @@ export async function generateFeaturedImage(prompt: string): Promise<string | nu
       );
       const parts: any[] = resp.data?.candidates?.[0]?.content?.parts ?? [];
       const imgPart = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
-      if (imgPart) return storeGeneratedImage(imgPart.inlineData.data, imgPart.inlineData.mimeType);
-    } catch (e) { logger.warn({ e: e instanceof Error ? e.message : e }, 'content_plan_gemini_image_failed'); }
-  }
-  // 3. Tertiary: OpenAI fallback
-  const openaiKey = (await getPlatformKey('openai')) || process.env.OPENAI_API_KEY;
-  if (openaiKey) {
-    try {
+      return imgPart ? storeGeneratedImage(imgPart.inlineData.data, imgPart.inlineData.mimeType) : null;
+    },
+  };
+  const openai: Attempt = {
+    model: `openai:${DEFAULT_OPENAI_IMAGE_MODEL}`,
+    credits: () => creditsForUsd(OPENAI_IMAGE_MODELS[DEFAULT_OPENAI_IMAGE_MODEL]?.providerCostUsd ?? 0.129),
+    run: async () => {
+      if (!openaiKey) return null;
       const resp = await axios.post(
         'https://api.openai.com/v1/images/generations',
         { model: DEFAULT_OPENAI_IMAGE_MODEL, prompt: prompt.slice(0, 3800), n: 1, size: '1024x1024', quality: 'auto' },
         { headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' }, timeout: 90_000 }
       );
       const b64: string = resp.data?.data?.[0]?.b64_json ?? '';
-      if (b64) return storeGeneratedImage(b64, 'image/png');
-    } catch (e) { logger.warn({ e: e instanceof Error ? e.message : e }, 'content_plan_openai_image_failed'); }
+      return b64 ? storeGeneratedImage(b64, 'image/png') : null;
+    },
+  };
+
+  // Cheapest first: free NVIDIA ($0) → Magnific Z-Image ($0.005) → Flux.1 ($0.01) → Gemini ($0.039) → OpenAI ($0.129) → Magnific One ($0.18).
+  const order: Attempt[] = mode === 'quality'
+    ? [magnific('magnific-one', { quality: 'medium', resolution: '2k' }), magnific('mystic'), free, gemini, openai]
+    : [free, magnific('z-image'), magnific('flux-dev'), gemini, openai, magnific('magnific-one', { quality: 'medium', resolution: '2k' })];
+  for (const a of order) {
+    try {
+      const url = await a.run();
+      if (url) return { url, credits: a.credits(), model: a.model };
+    } catch (e) {
+      logger.warn({ e: e instanceof Error ? e.message : e, model: a.model }, 'content_plan_image_attempt_failed');
+    }
   }
   return null;
 }
@@ -320,11 +346,15 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
       // Step 3 — the image. Charged in its own step, so a resume after the
       // image was drawn neither draws nor charges it again.
       const wantsImage = imageMode === 'always' || (imageMode === 'auto' && piece.needs_image !== false && Boolean(piece.image_prompt));
-      const imageUrl = wantsImage && piece.image_prompt
-        ? await cp.step<string | null>('image', () => generateFeaturedImage(String(piece.image_prompt)))
+      const mediaMode = await getMediaMode(dbQuery, plan.user_id);
+      const drawnImage = wantsImage && piece.image_prompt
+        ? await cp.step<{ url: string; credits: number; model: string } | string | null>('image', () => generateFeaturedImage(String(piece.image_prompt), mediaMode))
         : null;
-      if (imageUrl) {
-        await cp.step('image_charged', () => chargeAICredits(plan.user_id, ratePerImage(), 'content_plan_image', { plan_id: plan.id }).then(() => true).catch(() => false));
+      // (A run resumed from before this change stored just the URL; it was a Magnific One image.)
+      const imageUrl = typeof drawnImage === 'string' ? drawnImage : drawnImage?.url ?? null;
+      const imageCredits = typeof drawnImage === 'string' ? ratePerImage('quality') : drawnImage?.credits ?? 0;
+      if (imageUrl && imageCredits > 0) {
+        await cp.step('image_charged', () => chargeAICredits(plan.user_id, imageCredits, 'content_plan_image', { plan_id: plan.id, model: typeof drawnImage === 'string' ? 'magnific:magnific-one' : drawnImage?.model }).then(() => true).catch(() => false));
       }
 
       // Step 4 — the post. Scheduled (not draft) so the piece shows on the

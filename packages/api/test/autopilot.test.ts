@@ -718,7 +718,7 @@ test('Unit 5: Workflow B (short_form_video) enforces "no music" rule on multi-cl
   assert.ok(firstRun.item.media_assets.every((m) => m.role === 'scene_clip'));
   assert.ok((firstRun.item.validation_report as any).issues.some((i: any) => i.code === 'REEL_NOT_ASSEMBLED'));
   assert.equal(firstRun.accounting?.status, 'settled');
-  assert.equal(firstRun.accounting?.settled_credits, 3 * creditsForUsd(3.95), 'three Seedance 2.5 clips at cost × 1.54');
+  assert.equal(firstRun.accounting?.settled_credits, 3 * creditsForUsd(0.475), 'lowest cost by default: three Kling 3.0 Omni clips (not Seedance) at cost × 1.54');
   assert.equal(firstRun.accounting?.cost_status, 'estimated', 'Magnific reports no usage, so cost is an estimate, not actual');
 
   // Selective regeneration of Scene 2 ONLY — Scenes 1 & 3 must NOT re-render
@@ -739,7 +739,7 @@ test('Unit 5: Workflow B (short_form_video) enforces "no music" rule on multi-cl
   assert.equal(secondRun.item.storyboard[0].asset_id, scene1Original);
   assert.equal(secondRun.item.storyboard[2].asset_id, scene3Original);
   assert.notEqual(secondRun.item.storyboard[1].asset_id, firstRun.item.storyboard[1].asset_id);
-  assert.equal(secondRun.accounting?.settled_credits, creditsForUsd(3.95), 'the rerun charges one scene, not three');
+  assert.equal(secondRun.accounting?.settled_credits, creditsForUsd(0.475), 'the rerun charges one scene, not three');
   const storyboardNode = secondRun.run.node_executions.find((n) => n.node_id === 'node_storyboard_and_selective_render');
   assert.equal(storyboardNode?.outputs.scenes_rendered, 1);
   assert.equal(storyboardNode?.outputs.scenes_preserved_without_rerun, 2);
