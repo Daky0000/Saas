@@ -176,6 +176,50 @@ test('series: planned days spread across the month, one time per platform slot, 
   assert.notEqual(twin[0].scheduled_at, twin[1].scheduled_at);
 });
 
+// ── Magnific requests use the sizes each endpoint documents ───────────────────
+
+test('magnific: sizes follow the docs per model — 4:5 posts, 9:16 reels, Z-Image image_size, Kling 2.6 names', async () => {
+  const mg = await import('../src/server/magnificRoutes.ts');
+  assert.equal(mg.magnificAspectFor('flux-dev', '4:5'), 'social_post_4_5');
+  assert.equal(mg.magnificAspectFor('seedream-v4', '4:5'), 'traditional_3_4', 'no 4:5 there: the closest shape, not a square');
+  assert.equal(mg.magnificAspectFor('seedream-v4', '9:16'), 'social_story_9_16');
+  assert.equal(mg.magnificAspectFor('mystic', '3:4'), 'traditional_3_4');
+  assert.equal(mg.zImageSizeFor('4:5'), 'portrait_3_4');
+  assert.equal(mg.zImageSizeFor('9:16'), 'portrait_9_16');
+  assert.equal(mg.zImageSizeFor('16:9'), 'landscape_16_9');
+  assert.equal(mg.zImageSizeFor('1:1'), 'square_hd');
+  assert.equal(mg.klingAspectFor('9:16'), 'social_story_9_16');
+  assert.equal(mg.klingAspectFor('16:9'), 'widescreen_16_9');
+
+  // What is actually sent: captured at the HTTP layer (each call answers 400 so nothing is polled).
+  const axios = (await import('axios')).default;
+  const realPost = axios.post;
+  const sent: Array<{ url: string; body: any }> = [];
+  (axios as any).post = async (url: string, body: any) => { sent.push({ url, body }); return { status: 400, data: { message: 'stopped by test' }, headers: {} }; };
+  try {
+    await mg.magnificGenerateImage('z-image', 'rye loaf', '4:5', 'k', undefined, { reference_images: ['https://example.com/a.png'], resolution: '2k' } as any);
+    await mg.magnificGenerateImage('flux-dev', 'rye loaf', '4:5', 'k', undefined, { reference_images: ['https://example.com/a.png'] } as any);
+    await mg.magnificGenerateImage('seedream-v4', 'rye loaf', '9:16', 'k');
+    await mg.magnificOneGenerate({ prompt: 'rye loaf', aspect_ratio: '4:5' } as any, 'k');
+    await mg.magnificGenerateVideo({ model: 'kling-v2-6-pro', prompt: 'steam rises', image_url: 'https://example.com/c.jpg', aspect_ratio: '9:16', duration: 5 } as any, 'k');
+  } finally {
+    (axios as any).post = realPost;
+  }
+  const [zImage, fluxDev, seedream, one, kling] = sent.map((x) => x.body);
+  assert.equal(zImage.image_size, 'portrait_3_4');
+  assert.equal(zImage.aspect_ratio, undefined, 'Z-Image takes image_size, not aspect_ratio');
+  assert.equal(zImage.reference_images, undefined, 'Z-Image takes no reference images');
+  assert.equal(zImage.resolution, undefined);
+  assert.equal(fluxDev.aspect_ratio, 'social_post_4_5');
+  assert.equal(fluxDev.reference_images, undefined, 'Flux Dev takes no reference images');
+  assert.equal(seedream.aspect_ratio, 'social_story_9_16');
+  assert.equal(one.aspect_ratio, '3:4', 'Magnific One has no 4:5: the closest (3:4), not a square');
+  assert.match(sent[4].url, /\/v1\/ai\/image-to-video\/kling-v2-6-pro$/);
+  assert.equal(kling.aspect_ratio, 'social_story_9_16', 'Kling 2.6 refuses "9:16"');
+  assert.equal(kling.image, 'https://example.com/c.jpg');
+  assert.equal(kling.duration, '5');
+});
+
 // ── End to end: the chat corrects a false "30 posts created", then Proceed makes them ──
 
 test('E2E: a free model that claims "30 posts created" is corrected; the plan is priced; Proceed puts 30 posts on the calendar', { skip: !E2E, timeout: 120_000 }, async () => {
@@ -201,6 +245,7 @@ test('E2E: a free model that claims "30 posts created" is corrected; the plan is
 
   // The free model: the chat agent claims work it never did; the planner and writer answer as asked.
   const seen = { chat: 0, plan: 0, write: 0, polish: 0 };
+  let failedOnce = false;
   const realFetch = globalThis.fetch;
   const reply = (content: string) => new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 10 } }), { status: 200, headers: { 'content-type': 'application/json' } });
   globalThis.fetch = (async (url: any, init: any) => {
@@ -219,6 +264,8 @@ test('E2E: a free model that claims "30 posts created" is corrected; the plan is
       return reply(JSON.stringify({ pillars: ['Craft', 'Regulars', 'Classes'], posts }));
     }
     if (/^Rewrite this/.test(user)) { seen.polish++; return reply(JSON.stringify({ title: 'Rye', caption: 'Our rye proves for 18 hours. Saturday batch is 40 loaves.', hashtags: ['leedsbakery'] })); }
+    // Post 7 fails the first time: the batch finishes with one post missing.
+    if (/Post 7 of 30 in a series/.test(user) && !failedOnce) { failedOnce = true; return reply('{}'); }
     seen.write++;
     // The first post comes back full of clichés: it must be rewritten before it is saved.
     const caption = seen.write === 1 ? 'Unlock the secret sauce of rye! Elevate your breakfast.' : `Our rye proves for 18 hours (${seen.write}).`;
@@ -267,6 +314,21 @@ test('E2E: a free model that claims "30 posts created" is corrected; the plan is
 
     const run = await request(app).post(`/api/ai/chat/actions/${estimate.action_id}/run`).send({});
     assert.equal(run.status, 200, run.text.slice(0, 300));
+    const afterRun = await pool.query(`SELECT COUNT(*)::int AS n FROM blog_posts WHERE user_id=$1`, [userId]);
+    assert.equal(afterRun.rows[0].n, 29, 'one post failed and was not charged');
+
+    // "Write the rest" is priced first: nothing runs or is charged until the user confirms.
+    const balanceBefore = Number((await helpers.ensureCreditAccount(userId) as any).credits);
+    const quote = await request(app).post(`/api/ai/chat/actions/${estimate.action_id}/resume`).send({});
+    assert.equal(quote.status, 200);
+    assert.equal(quote.body.needs_confirmation, true);
+    assert.match(quote.body.label, /Make the 1 post not made yet/);
+    assert.ok(quote.body.credits > 0 && quote.body.credits < estimate.credits);
+    assert.equal((await pool.query(`SELECT COUNT(*)::int AS n FROM blog_posts WHERE user_id=$1`, [userId])).rows[0].n, 29, 'nothing made by the quote');
+    assert.equal(Number((await helpers.ensureCreditAccount(userId) as any).credits), balanceBefore, 'nothing charged by the quote');
+    const resumed = await request(app).post(`/api/ai/chat/actions/${estimate.action_id}/resume`).send({ confirm: true });
+    assert.equal(resumed.status, 200, resumed.text.slice(0, 300));
+
     const { rows } = await pool.query(`SELECT title, content, status, scheduled_at, social_platform, post_format, source FROM blog_posts WHERE user_id=$1 ORDER BY scheduled_at`, [userId]);
     assert.equal(rows.length, 30, 'all 30 posts are on the calendar');
     assert.ok(rows.every((r: any) => r.status === 'scheduled' && r.source === 'chat' && r.social_platform && new Date(r.scheduled_at).getTime() > Date.now()));

@@ -19,8 +19,8 @@ import { creditsForMagnific, economyImageCharge, magnificAudioCost, magnificEdit
 
 type Query = (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;
 
-/** Credits for the words of one post (the content-plan copy rate); media is priced on top. */
-export const BATCH_MAX_POSTS = 30;
+/** Most posts in one batch: planned in parts of 10 and made three at a time. */
+export const BATCH_MAX_POSTS = 60;
 
 let ensured: Promise<void> | null = null;
 

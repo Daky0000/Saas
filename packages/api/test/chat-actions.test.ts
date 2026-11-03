@@ -77,7 +77,7 @@ test('scheduling: LinkedIn skips the weekend, best slots respect the timezone', 
 });
 
 test('batch: capped at the maximum', () => {
-  const posts = ca.batchPosts({ posts: Array.from({ length: 50 }, (_, i) => ({ topic: `t${i}` })) });
+  const posts = ca.batchPosts({ posts: Array.from({ length: ca.BATCH_MAX_POSTS + 20 }, (_, i) => ({ topic: `t${i}` })) });
   assert.equal(posts.length, ca.BATCH_MAX_POSTS);
 });
 

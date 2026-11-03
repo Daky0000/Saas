@@ -48,6 +48,9 @@ import {
   defaultImageModel, defaultVideoModel, getMediaMode, mediaModeBlock, normalizeMediaMode, saveMediaMode, type MediaMode,
 } from './chatActions.ts';
 
+/** Posts written (with their media) at the same time in a batch job. */
+const BATCH_WORKERS = 3;
+
 const OUT_OF_CREDITS_MSG = "You need more AI credits. Buy credits without changing your plan, or wait for your monthly allowance reset.";
 
 type AuthResult = { userId: string; role?: string } | null;
@@ -93,6 +96,7 @@ const AI_CORE_RULES = `
 - Only a tool makes things. Never say or imply that a post, image, video, draft or calendar entry exists, was created, generated, scheduled or added unless a tool result in THIS reply says so.
 - create_posts_batch and the magnific_* tools only PRICE the work: their result is "awaiting_confirmation" and nothing exists yet. Say what WILL be made and that the user presses Proceed on the card. Never say "created", "scheduled", "added to your calendar", "ready" or "done" for them.
 - If a tool fails or is refused, say so plainly in one sentence and offer the next step. Never cover a failure.
+- Never make something again on your own (a post, image, video or caption you or the user did not like): offer it, and only call the tool when the user asks. Making it again costs credits, so it always goes through the estimate card and the user's Proceed.
 
 ## MEMORY (do not remove)
 - Before any task, check THE USER'S CUSTOM INSTRUCTIONS, then WHAT THIS USER LIKES AND DOESN'T, then THE USER'S DESIGN SYSTEM, and follow them.
@@ -107,6 +111,10 @@ const AI_CORE_RULES = `
 - Which platforms: the ones the user names; otherwise the connected platforms in LIVE SAAS STATE; if none are connected and none are named, plan for Instagram, Facebook and LinkedIn and say so in one line.
 - Account stage: if no social account is connected, treat the user as a brand-new account (unless they say otherwise): introduce the brand, build trust, mix value and personality, ask for follows, keep a steady cadence (about 1 post a day per platform). With connected accounts, use their size and the brand memory.
 - Tools that cost credits (create_posts_batch and every magnific_* tool) do not run when you call them: the user sees the plan and the credit estimate (including every image and video) with Proceed / Cancel. When the result says "awaiting_confirmation", tell the user in one or two sentences what will be made (from the result's summary) and the estimated credits, and that nothing is made until they press Proceed. Then stop. Do not call the tool again.
+
+## BIG OR MULTI-PART REQUESTS (do not remove)
+- Never try to do a big request in one go. Break it into steps and do them one at a time, in order: say the steps in one short line, then make ONE tool call per step and wait for its result before the next (e.g. a month of posts → create_posts_batch once — the server splits it into parts of 10 and makes them in parallel; a blog article → create_draft; to-dos → create_task).
+- Never put several different jobs into one tool call, never skip a step, and never say a step is done before its tool result says so. If a step fails, say which one and carry on with the others.
 
 ## WHEN TO ASK QUESTIONS (do not remove)
 - Default to doing the work. Ask only when a missing answer would make the result wrong for THIS user AND you cannot work it out from ABOUT THIS USER, the design system, custom instructions, preferences, LIVE SAAS STATE (connected accounts, recent posts) or this conversation.
@@ -1021,10 +1029,16 @@ export function registerAIChatRoutes({
       }
       return [];
     };
+    // A big plan is made in parts of 10: part 1 first (it sets the pillars and the angles taken),
+    // then the other parts in parallel, three at a time, each told what part 1 already covers.
     const chunks = planChunks(missing, days, 10);
-    for (const chunk of chunks) {
-      onStatus(chunks.length > 1 ? `Planning posts ${chunk.from}–${chunk.to} of ${missing} from your brand` : `Planning ${missing} post${missing === 1 ? '' : 's'} from your brand`);
-      planned.push(...await ask(chunks.length > 1 ? chunk : undefined));
+    onStatus(chunks.length > 1 ? `Planning part 1 of ${chunks.length} (posts 1–${chunks[0].to}) from your brand` : `Planning ${missing} post${missing === 1 ? '' : 's'} from your brand`);
+    planned.push(...await ask(chunks.length > 1 ? chunks[0] : undefined));
+    const later = chunks.slice(1);
+    for (let i = 0; i < later.length; i += 3) {
+      const group = later.slice(i, i + 3);
+      onStatus(`Planning part${group.length > 1 ? 's' : ''} ${group.map((c) => chunks.indexOf(c) + 1).join(', ')} of ${chunks.length} in parallel`);
+      for (const posts of await Promise.all(group.map((c) => ask(c)))) planned.push(...posts);
     }
     // One top-up when the planner came back short.
     if (planned.length && planned.length < missing) {
@@ -1665,6 +1679,7 @@ export function registerAIChatRoutes({
         const free = await nvidiaAgentLoop({
           system: `${stablePrompt}\n\n${dynamicPrompt}`,
           history,
+          maxIterations: 8,
           tools: AI_TOOLS as any,
           executeTool: runTool,
           onText: (text) => sendText(checkOutput(text, { canary: CHAT_CANARY }).text),
@@ -1775,8 +1790,9 @@ export function registerAIChatRoutes({
       const usage = { input: 0, output: 0, cacheRead: 0 };
 
       try {
-        for (let iteration = 0; iteration < 5 && !leaked; iteration++) {
-          const isLastIteration = iteration >= 4;
+        // Room for a multi-part request done step by step (one tool call per step).
+        for (let iteration = 0; iteration < 8 && !leaked; iteration++) {
+          const isLastIteration = iteration >= 7;
 
           const stream = client.messages.stream({
             model: paidModel,
@@ -2341,7 +2357,9 @@ export function registerAIChatRoutes({
      * One image, cheapest first (or Magnific One first on "best quality").
      * Charged at the model actually used × 1.54; the free NVIDIA model is not charged.
      */
-    const tryMagnific = async (model: string, opts: Record<string, unknown>, prompt: string, aspect: string): Promise<{ url: string; charged: number } | null> => {
+    // The last reason an image could not be made, per post, so the note can say why (not just "could not").
+    const mediaErrors = new Map<number, string>();
+    const tryMagnific = async (model: string, opts: Record<string, unknown>, prompt: string, aspect: string, postIndex = -1): Promise<{ url: string; charged: number } | null> => {
       if (!magnificKey) return null;
       const r = await magnificGenerateImage(model, prompt, aspect, magnificKey, undefined, opts as any).catch((err) => ({ url: null, error: String(err) } as any));
       if (r?.url) {
@@ -2349,6 +2367,7 @@ export function registerAIChatRoutes({
         return { url: await durableMediaUrl(r.url, userId), charged: model === SOCIAL_IMAGE_MODEL ? cost : economyImageCharge(cost) };
       }
       logger.warn({ err: r?.error, model }, 'chat_batch_image_failed');
+      if (r?.error) mediaErrors.set(postIndex, `${model}: ${String(r.error).replace(/\s+/g, ' ').slice(0, 160)}`);
       return null;
     };
     const tryFree = async (prompt: string, aspect: string): Promise<{ url: string; charged: number } | null> => {
@@ -2358,7 +2377,7 @@ export function registerAIChatRoutes({
       // Charged like any Lowest-cost image (half the Best-quality price).
       return drawn ? { url: await storeMediaBytes(drawn.bytes, drawn.mimeType, userId, { jpeg: true } as any), charged: economyImageCharge(0) } : null;
     };
-    const drawImage = async (rawPrompt: string, aspect: string, refs: string[], channel?: string, assetNames: string[] = []): Promise<{ url: string; charged: number } | null> => {
+    const drawImage = async (rawPrompt: string, aspect: string, refs: string[], channel?: string, assetNames: string[] = [], postIndex = -1): Promise<{ url: string; charged: number } | null> => {
       // What the user taught: example designs (style references), rules (Brand Kit bans), saved products/people/places.
       if (hasTasteToUse) {
         const taught = await generateTastefulImage({ query: q, userId, mcp: magnificMcp, prompt: rawPrompt, aspectRatio: aspect, mode: mediaMode, channel, assetNames, taste }).catch(() => null);
@@ -2376,13 +2395,14 @@ export function registerAIChatRoutes({
         // Magnific One through the user's Brand Kit: the design system is sent once and reused.
         const branded = await generateWithBrandKit({ query: q, userId, mcp: magnificMcp, prompt: rawPrompt, aspectRatio: aspect, channel }).catch(() => null);
         if (branded) return { url: await durableMediaUrl(branded.url, userId), charged: socialImageCredits('quality') };
-        return (await tryMagnific(SOCIAL_IMAGE_MODEL, { ...SOCIAL_IMAGE_OPTS, ...withRefs }, prompt, aspect))
-          ?? (await tryMagnific(ECONOMY_IMAGE_MODEL, withRefs, prompt, aspect))
+        return (await tryMagnific(SOCIAL_IMAGE_MODEL, { ...SOCIAL_IMAGE_OPTS, ...withRefs }, prompt, aspect, postIndex))
+          ?? (await tryMagnific(ECONOMY_IMAGE_MODEL, {}, prompt, aspect, postIndex))
           ?? (await tryFree(prompt, aspect));
       }
+      // Z-Image and Flux Dev take no reference images: the learned style rides in the prompt instead.
       return (await tryFree(prompt, aspect))
-        ?? (await tryMagnific(ECONOMY_IMAGE_MODEL, withRefs, prompt, aspect))
-        ?? (await tryMagnific(ECONOMY_IMAGE_FALLBACK, {}, prompt, aspect));
+        ?? (await tryMagnific(ECONOMY_IMAGE_MODEL, {}, prompt, aspect, postIndex))
+        ?? (await tryMagnific(ECONOMY_IMAGE_FALLBACK, {}, prompt, aspect, postIndex));
     };
 
     const worker = async () => {
@@ -2447,17 +2467,41 @@ export function registerAIChatRoutes({
             : (item.format !== 'text' || item.with_image)
               ? [[piece.image_prompt || item.topic, item.visual, isVideoFormat(item.format) ? 'Vertical cover frame for a short video.' : ''].filter(Boolean).join('. ')]
               : [];
-          for (let k = 0; k < prompts.length; k++) {
-            if (magnificKey && await balance() < socialImageCredits(mediaMode)) { notes.push('Ran out of credits before every image was made.'); break; }
-            await setItem(index, { status: 'media', progress: prompts.length > 1 ? `Image ${k + 1} of ${prompts.length}` : 'Creating the image', post: { ...post } });
-            const refs = item.format === 'carousel' && post.media_assets[0]?.url ? [post.media_assets[0].url] : [];
-            const img = await drawImage(prompts[k], aspect, refs, magnificChannel(item.platform, item.format), item.assets).catch(() => null);
-            if (!img) { notes.push(magnificKey ? `Image ${k + 1} could not be made (not charged).` : 'Images need Magnific (Admin → Magnific AI) or media storage — none were made.'); if (!magnificKey) break; continue; }
+          // Made in parts: the cover (carousel slide 1) first — it sets the look the others follow —
+          // then the remaining slides in parallel, three at a time.
+          const channel = magnificChannel(item.platform, item.format);
+          const images: Array<{ url: string; type: 'image'; caption?: string } | null> = prompts.map(() => null);
+          const failedImages: number[] = [];
+          let creditsShort = false;
+          const makeImage = async (k: number, refs: string[]) => {
+            if (magnificKey && await balance() < socialImageCredits(mediaMode)) { creditsShort = true; return; }
+            const img = await drawImage(prompts[k], aspect, refs, channel, item.assets, index).catch(() => null);
+            if (!img) { failedImages.push(k + 1); return; }
             if (img.charged) await charge(img.charged, 'chat_post_image', { post_id: id });
-            post.media_assets.push({ url: img.url, type: 'image', ...(piece.slides[k] ? { caption: piece.slides[k].headline } : {}) });
-            if (!post.featured_image) post.featured_image = img.url;
+            images[k] = { url: img.url, type: 'image', ...(piece.slides[k] ? { caption: piece.slides[k].headline } : {}) };
+            post.media_assets = images.filter((x): x is NonNullable<typeof x> => Boolean(x));
+            post.featured_image = post.media_assets[0]?.url || img.url;
             await saveMedia();
             await setItem(index, { post: { ...post } }, img.charged);
+          };
+          if (prompts.length && !magnificKey && !mediaStorageAvailable()) {
+            notes.push('Images need Magnific (Admin → Magnific AI) or media storage — none were made.');
+          } else if (prompts.length) {
+            await setItem(index, { status: 'media', progress: prompts.length > 1 ? `Image 1 of ${prompts.length} (sets the look)` : 'Creating the image', post: { ...post } });
+            await makeImage(0, []);
+            const rest = prompts.map((_, k) => k).slice(1);
+            const styleRef = images[0]?.url ? [images[0].url] : [];
+            for (let i = 0; i < rest.length && !creditsShort; i += 3) {
+              const part = rest.slice(i, i + 3);
+              await setItem(index, { status: 'media', progress: `Images ${part[0] + 1}–${part[part.length - 1] + 1} of ${prompts.length}`, post: { ...post } });
+              await Promise.all(part.map((k) => makeImage(k, styleRef)));
+            }
+            if (creditsShort) notes.push('Ran out of credits before every image was made.');
+            if (failedImages.length) {
+              const which = failedImages.length === prompts.length ? (prompts.length > 1 ? 'The images' : 'The image') : `Image${failedImages.length > 1 ? 's' : ''} ${failedImages.sort((a, b) => a - b).join(', ')}`;
+              const why = mediaErrors.get(index);
+              notes.push(`${which} could not be made (not charged)${why ? ` — ${why}` : ''}.`);
+            }
           }
 
           // 4. Video (reels / shorts): animated from the cover image.
@@ -2483,7 +2527,7 @@ export function registerAIChatRoutes({
                 await setItem(index, { post: { ...post } }, socialVideoCredits(mediaMode));
               } else {
                 logger.warn({ err: v?.error }, 'chat_batch_video_failed');
-                notes.push('The video could not be made (not charged); the cover image is saved.');
+                notes.push(`The video could not be made (not charged)${v?.error ? ` — ${String(v.error).replace(/\s+/g, ' ').slice(0, 160)}` : ''}; the cover image is saved.`);
               }
             }
           }
@@ -2498,7 +2542,8 @@ export function registerAIChatRoutes({
         }
       }
     };
-    await Promise.all([worker(), worker()]);
+    // Three posts are made at the same time; each one is its own small job.
+    await Promise.all(Array.from({ length: BATCH_WORKERS }, () => worker()));
     // Anything still queued (the run stopped early) counts as not made.
     for (const i of snap.items) if (i.status !== 'done' && i.status !== 'failed') { i.status = 'failed'; i.error = i.error || 'Not made'; snap.failed++; }
     snap.finished = true;
@@ -2616,17 +2661,28 @@ export function registerAIChatRoutes({
     res.json({ success: true, action: { id: a.id, tool: a.tool, label: a.label, credits: a.credits, status: interrupted ? 'interrupted' : a.status, live, snapshot: a.result ?? null } });
   });
 
-  /** Finishes what an interrupted or partly failed action did not: only the missing posts are written (and charged). */
+  /**
+   * Finishes what an interrupted or partly failed action did not: only the
+   * missing posts are written (and charged). Making anything again needs the
+   * user's confirmation: without `confirm: true` this only prices what is left
+   * and returns the quote — nothing runs and nothing is charged.
+   */
   router.post('/ai/chat/actions/:id/resume', aiChatLimiter, async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
+    const confirmed = (req.body as any)?.confirm === true;
     const a = await loadAction(auth.userId, String(req.params.id)).catch(() => null);
     if (!a) return res.status(404).json({ success: false, error: 'Not found' });
-    if (jobs.has(a.id)) return followJob(res, a.id);
+    if (jobs.has(a.id)) return confirmed ? followJob(res, a.id) : res.json({ success: true, running: true });
     const snap = a.result as ActionSnapshot | null;
     const resumable = a.status === 'failed' || a.status === 'running'
       || (a.status === 'done' && snap?.kind === 'batch' && snap.failed > 0);
     if (!resumable) return res.status(409).json({ success: false, code: 'not_resumable', error: 'There is nothing left to finish here.' });
+    if (!confirmed) {
+      const quote = resumeQuote(a.tool, a.args, a.credits, a.label, snap);
+      const balance = await ensureCreditAccount(auth.userId).then((acc: any) => Number(acc?.credits ?? 0)).catch(() => null);
+      return res.json({ success: true, needs_confirmation: true, ...quote, balance });
+    }
     const account: any = await ensureCreditAccount(auth.userId).catch(() => null);
     const needed = a.tool === 'create_posts_batch' ? socialCopyCredits() : a.credits;
     if (Number(account?.credits ?? 0) < needed || account?.spendingBlocked) {
@@ -2636,6 +2692,23 @@ export function registerAIChatRoutes({
     startJob({ id: a.id, tool: a.tool, args: a.args }, auth.userId, snap);
     followJob(res, a.id);
   });
+
+  /** What making the rest again costs: only the posts not yet made (a single generation: its own price). */
+  function resumeQuote(tool: string, args: any, credits: number, label: string, snap: ActionSnapshot | null): { credits: number; label: string; lines: string[] } {
+    if (tool === 'create_posts_batch') {
+      const all = batchPosts(args);
+      const doneIdx = new Set(snap?.kind === 'batch' ? snap.items.filter((i) => i.status === 'done').map((i) => i.index) : []);
+      const left = all.filter((_, i) => !doneIdx.has(i));
+      const est = estimateToolCredits('create_posts_batch', { ...args, posts: left });
+      const n = left.length;
+      return {
+        credits: est?.credits ?? 0,
+        label: `Make the ${n} post${n === 1 ? '' : 's'} not made yet`,
+        lines: est?.lines ?? [],
+      };
+    }
+    return { credits, label: `Run again: ${label}`, lines: [] };
+  }
 
   router.post('/ai/chat/actions/:id/cancel', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);

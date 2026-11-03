@@ -129,7 +129,11 @@ type EstimateMessage = {
   plan?: PlannedPostPreview[];
   /** One line: "30 posts: 10 × Instagram carousel, … Pillars: …". */
   summary?: string;
+  /** "Try again" / "Write the rest" priced first: nothing runs or is charged until the user confirms. */
+  regenQuote?: RegenQuote;
+  quoting?: boolean;
 };
+type RegenQuote = { credits: number; label: string; lines: string[]; balance: number | null };
 type PlannedPostPreview = { platform: string; format: string; slides?: number; topic: string; pillar?: string; scheduled_at?: string | null };
 type BatchItem = {
   index: number; topic: string; platform?: string; format?: string;
@@ -774,7 +778,29 @@ function ActivityCard({ msg }: { msg: ActivityMessage }) {
   );
 }
 
-function EstimateCard({ msg, busy, onProceed, onCancel, onResume }: { msg: EstimateMessage; busy: boolean; onProceed: () => void; onCancel: () => void; onResume: () => void }) {
+/** Asks before anything is made again: what it makes, what it costs, and the balance after. */
+function RegenConfirm({ quote, busy, onConfirm, onDismiss }: { quote: RegenQuote; busy: boolean; onConfirm: () => void; onDismiss: () => void }) {
+  const short = quote.balance !== null && quote.balance < quote.credits;
+  return (
+    <div className="mt-1.5 rounded-lg border border-indigo-200 bg-indigo-50/70 px-2.5 py-2 text-[11px]">
+      <p className="font-semibold text-slate-800">{quote.label} — about {quote.credits} credits</p>
+      {quote.lines.map((l) => <p key={l} className="text-slate-500">{l}</p>)}
+      {quote.balance !== null && (
+        <p className={short ? 'text-red-600' : 'text-slate-500'}>Balance {quote.balance} → {Math.max(0, quote.balance - quote.credits)} after this{short ? ' — not enough to finish everything' : ''}</p>
+      )}
+      <p className="text-slate-500">What's already made is kept and not charged again. Nothing runs until you confirm.</p>
+      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+        <button type="button" disabled={busy} onClick={onConfirm}
+          className="rounded-lg bg-indigo-600 px-3 py-1 font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">Yes, make them</button>
+        <button type="button" disabled={busy} onClick={onDismiss}
+          className="rounded-lg bg-white px-3 py-1 font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-50">Not now</button>
+        {short && <a href="/credits" className="font-semibold text-indigo-600 hover:underline">Top up credits →</a>}
+      </div>
+    </div>
+  );
+}
+
+function EstimateCard({ msg, busy, onProceed, onCancel, onResume, onConfirmResume, onDismissResume }: { msg: EstimateMessage; busy: boolean; onProceed: () => void; onCancel: () => void; onResume: () => void; onConfirmResume: () => void; onDismissResume: () => void }) {
   const short = msg.needsCredits || (msg.balance !== null && msg.balance < msg.credits);
   const [showPlan, setShowPlan] = useState(false);
   return (
@@ -848,20 +874,34 @@ function EstimateCard({ msg, busy, onProceed, onCancel, onResume }: { msg: Estim
           <p className="text-[11px] font-medium text-red-600">
             {msg.status === 'interrupted' ? 'Stopped part-way when the server restarted. What was finished is saved and charged; the rest was not.' : msg.error || 'This did not finish — nothing more was charged.'}
           </p>
-          <button type="button" disabled={busy} onClick={onResume}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
-            <RotateCcw size={11} /> {msg.status === 'interrupted' ? 'Finish the rest' : 'Try again'}
-          </button>
+          {msg.regenQuote ? (
+            <RegenConfirm quote={msg.regenQuote} busy={busy} onConfirm={onConfirmResume} onDismiss={onDismissResume} />
+          ) : (
+            <button type="button" disabled={busy || msg.quoting} onClick={onResume}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+              {msg.quoting ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />} {msg.status === 'interrupted' ? 'Finish the rest' : 'Try again'}
+            </button>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function BatchCard({ msg, busy, onResume }: { msg: BatchMessage; busy: boolean; onResume: () => void }) {
+function BatchCard({ msg, busy, onResume, quote, quoting, onConfirmResume, onDismissResume }: { msg: BatchMessage; busy: boolean; onResume: () => void; quote?: RegenQuote; quoting?: boolean; onConfirmResume: () => void; onDismissResume: () => void }) {
   const [openIdx, setOpenIdx] = useState<number | null>(null);
   const done = msg.items.filter((i) => i.status === 'done').length;
   const failed = msg.items.filter((i) => i.status === 'failed').length;
+  // A big batch is worked in parts of 10 (three posts at a time): each part's progress.
+  const parts = msg.total > 10 ? Array.from({ length: Math.ceil(msg.total / 10) }, (_, p) => {
+    const inPart = msg.items.filter((i) => Math.floor(i.index / 10) === p);
+    return {
+      n: p + 1, size: Math.min(10, msg.total - p * 10),
+      done: inPart.filter((i) => i.status === 'done').length,
+      failed: inPart.filter((i) => i.status === 'failed').length,
+      active: inPart.some((i) => i.status === 'writing' || i.status === 'media'),
+    };
+  }) : [];
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white text-xs">
       <div className="border-b border-slate-100 px-3 py-2">
@@ -874,6 +914,15 @@ function BatchCard({ msg, busy, onResume }: { msg: BatchMessage; busy: boolean; 
         <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
           <div className="h-full rounded-full bg-indigo-500 transition-all duration-500" style={{ width: `${msg.total ? ((done + failed) / msg.total) * 100 : 0}%` }} />
         </div>
+        {parts.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {parts.map((p) => (
+              <span key={p.n} className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${p.done === p.size ? 'bg-emerald-50 text-emerald-700' : p.active ? 'bg-indigo-50 text-indigo-700' : p.failed ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
+                Part {p.n} {p.done === p.size ? '✓' : p.active ? `· ${p.done}/${p.size}` : p.done || p.failed ? `· ${p.done}/${p.size}` : '· waiting'}
+              </span>
+            ))}
+          </div>
+        )}
         {msg.banner && <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-amber-700"><Loader2 size={11} className="shrink-0 animate-spin" />{msg.banner}</p>}
         {msg.status === 'running' && !msg.banner && (
           <p className="mt-1 text-[10.5px] text-slate-400">Each post goes on your calendar the moment it's written. You can close the chat — this keeps going.</p>
@@ -948,15 +997,16 @@ function BatchCard({ msg, busy, onResume }: { msg: BatchMessage; busy: boolean; 
             {failed === 0 ? `All ${done} posts are scheduled — review or edit them any time before they publish.` : `${done} scheduled, ${failed} not written (not charged).`}
           </span>
           <span className="flex items-center gap-2">
-            {failed > 0 && (
-              <button type="button" disabled={busy} onClick={onResume}
+            {failed > 0 && !quote && (
+              <button type="button" disabled={busy || quoting} onClick={onResume}
                 className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
-                <RotateCcw size={11} /> Write the rest ({failed})
+                {quoting ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />} Write the rest ({failed})
               </button>
             )}
             {msg.stopped && <a href="/credits" className="text-[11px] font-semibold text-indigo-600 hover:underline">Top up</a>}
             {done > 0 && <a href="/posts/automation?tab=calendar" className="text-[11px] font-semibold text-indigo-600 hover:underline">Open calendar →</a>}
           </span>
+          {quote && <div className="w-full"><RegenConfirm quote={quote} busy={busy} onConfirm={onConfirmResume} onDismiss={onDismissResume} /></div>}
         </div>
       )}
     </div>
@@ -2181,6 +2231,8 @@ export default function ChatWidget() {
           const res = await fetch(`${getApiBaseUrl()}/api/ai/chat/actions/${encodeURIComponent(actionId)}/${mode}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('auth_token')}` },
+            // Making something again always follows the user's own "Yes" on the quote.
+            body: JSON.stringify(mode === 'resume' ? { confirm: true } : {}),
           });
           if (res.status === 402) {
             const d = await res.json().catch(() => ({}));
@@ -2230,8 +2282,41 @@ export default function ChatWidget() {
   const runAction = useCallback((estimateId: string, mode: 'run' | 'resume' = 'run') => {
     const est = messages.find((m): m is EstimateMessage => m.id === estimateId && m.kind === 'estimate');
     if (!est || loading) return;
+    if (mode === 'resume') setMessages((prev) => prev.map((m) => (m.id === estimateId && m.kind === 'estimate' ? { ...m, regenQuote: undefined } : m)));
     void driveAction(activeId, est.actionId, mode);
-  }, [messages, loading, activeId, driveAction]);
+  }, [messages, loading, activeId, driveAction, setMessages]);
+
+  /**
+   * "Try again" / "Finish the rest" / "Write the rest": the server prices what
+   * is left first; the user sees the credits and confirms before anything runs.
+   */
+  const askResume = useCallback(async (estimateId: string) => {
+    const est = messages.find((m): m is EstimateMessage => m.id === estimateId && m.kind === 'estimate');
+    if (!est || loading) return;
+    const sid = activeId;
+    const patch = (p: Partial<EstimateMessage>) => setMessagesFor(sid)((prev) => prev.map((m) => (m.id === estimateId && m.kind === 'estimate' ? { ...m, ...p } : m)));
+    patch({ quoting: true, regenQuote: undefined });
+    try {
+      const r = await fetch(`${getApiBaseUrl()}/api/ai/chat/actions/${encodeURIComponent(est.actionId)}/resume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('auth_token')}` },
+        body: JSON.stringify({}),
+      });
+      const d = await r.json().catch(() => ({} as any));
+      if (r.ok && d?.running) { patch({ quoting: false }); void driveAction(sid, est.actionId, 'follow'); return; }
+      if (r.ok && d?.needs_confirmation) {
+        patch({ quoting: false, regenQuote: { credits: Number(d.credits) || 0, label: String(d.label || 'Make it again'), lines: Array.isArray(d.lines) ? d.lines.map(String) : [], balance: typeof d.balance === 'number' ? d.balance : null } });
+        return;
+      }
+      patch({ quoting: false, error: d?.error || 'This cannot be made again right now.' });
+    } catch {
+      patch({ quoting: false, error: 'Could not check the cost — please try again.' });
+    }
+  }, [messages, loading, activeId, setMessagesFor, driveAction]);
+
+  const dismissResume = useCallback((estimateId: string) => {
+    setMessages((prev) => prev.map((m) => (m.id === estimateId && m.kind === 'estimate' ? { ...m, regenQuote: undefined } : m)));
+  }, [setMessages]);
 
   const cancelAction = useCallback((estimateId: string) => {
     const est = messages.find((m): m is EstimateMessage => m.id === estimateId && m.kind === 'estimate');
@@ -2528,10 +2613,18 @@ export default function ChatWidget() {
                       <div className="pl-8"><ActivityCard msg={msg} /></div>
                     ) : msg.kind === 'estimate' ? (
                       <div className="pl-8">
-                        <EstimateCard msg={msg} busy={loading} onProceed={() => runAction(msg.id)} onCancel={() => cancelAction(msg.id)} onResume={() => runAction(msg.id, 'resume')} />
+                        <EstimateCard msg={msg} busy={loading} onProceed={() => runAction(msg.id)} onCancel={() => cancelAction(msg.id)}
+                          onResume={() => void askResume(msg.id)} onConfirmResume={() => runAction(msg.id, 'resume')} onDismissResume={() => dismissResume(msg.id)} />
                       </div>
                     ) : msg.kind === 'batch' ? (
-                      <div className="pl-8"><BatchCard msg={msg} busy={loading} onResume={() => runAction(`estimate-${msg.id.slice('batch-'.length)}`, 'resume')} /></div>
+                      <div className="pl-8">{(() => {
+                        const estimateId = `estimate-${msg.id.slice('batch-'.length)}`;
+                        const est = messages.find((m): m is EstimateMessage => m.id === estimateId && m.kind === 'estimate');
+                        return (
+                          <BatchCard msg={msg} busy={loading} quote={est?.regenQuote} quoting={est?.quoting}
+                            onResume={() => void askResume(estimateId)} onConfirmResume={() => runAction(estimateId, 'resume')} onDismissResume={() => dismissResume(estimateId)} />
+                        );
+                      })()}</div>
                     ) : msg.kind === 'tool' ? (
                       <div className="pl-8"><ToolCard msg={msg} /></div>
                     ) : msg.kind === 'form' ? (
