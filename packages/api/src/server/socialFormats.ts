@@ -30,6 +30,12 @@ export const ECONOMY_IMAGE_MODEL = 'z-image';
 /** Next cheapest if Z-Image fails (Flux.1, ≈ $0.01). */
 export const ECONOMY_IMAGE_FALLBACK = 'flux-dev';
 export const SOCIAL_VIDEO_MODEL_FROM_IMAGE = 'kling-v2-6-pro';
+/** Best-quality video: Kling 3.0 (450 Magnific credits per 5 s, twice Kling 2.6). */
+export const QUALITY_VIDEO_MODEL = 'kling-3-0';
+/** The video model for a media setting: Kling 2.6 on Lowest cost, Kling 3.0 on Best quality. */
+export function socialVideoModel(mode: 'economy' | 'quality' = 'economy'): string {
+  return mode === 'quality' ? QUALITY_VIDEO_MODEL : SOCIAL_VIDEO_MODEL_FROM_IMAGE;
+}
 export const SOCIAL_VIDEO_MODEL_FROM_TEXT = 'ltx-2-pro';
 /** Social images: Magnific One at 2k, medium quality (Magnific's standard finished image). */
 export const SOCIAL_IMAGE_OPTS = { quality: 'medium', resolution: '2k' } as const;
@@ -45,7 +51,7 @@ export function socialImageCredits(mode: 'economy' | 'quality' = 'economy'): num
     : economyImageCredits();
 }
 /** A video is animated from its cover image, so a reel costs a cover image plus this. */
-export function socialVideoCredits(): number { return creditsForMagnific(magnificVideoCost(SOCIAL_VIDEO_MODEL_FROM_IMAGE, { duration: SOCIAL_VIDEO_SECONDS, resolution: '1080p' })); }
+export function socialVideoCredits(mode: 'economy' | 'quality' = 'economy'): number { return creditsForMagnific(magnificVideoCost(socialVideoModel(mode), { duration: SOCIAL_VIDEO_SECONDS, resolution: '1080p' })); }
 
 export const MIN_SLIDES = 3;
 export const MAX_SLIDES = 10;
@@ -95,7 +101,7 @@ export function clampSlides(slides?: number): number {
 
 export function postCredits(format: SocialFormat, slides?: number, withImage?: boolean, mode: 'economy' | 'quality' = 'economy'): number {
   const m = mediaPlan(format, slides, withImage);
-  return socialCopyCredits() + m.images * socialImageCredits(mode) + m.videos * socialVideoCredits();
+  return socialCopyCredits() + m.images * socialImageCredits(mode) + m.videos * socialVideoCredits(mode);
 }
 
 export function aspectRatioFor(platform: SocialPlatform, format: SocialFormat): string {

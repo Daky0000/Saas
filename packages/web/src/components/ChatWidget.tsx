@@ -930,7 +930,7 @@ function CustomInstructionsPanel({ onDone }: { onDone: () => void }) {
   const [saved, setSaved] = useState('');
   const [mode, setMode] = useState<'economy' | 'quality'>('economy');
   const [savedMode, setSavedMode] = useState<'economy' | 'quality'>('economy');
-  const [prices, setPrices] = useState<{ economy_image: number; quality_image: number; video: number } | null>(null);
+  const [prices, setPrices] = useState<{ economy_image: number; quality_image: number; video: number; quality_video?: number } | null>(null);
   const [max, setMax] = useState(4000);
   const [state, setState] = useState<'loading' | 'idle' | 'saving' | 'saved' | 'error'>('loading');
   useEffect(() => {
@@ -971,8 +971,8 @@ function CustomInstructionsPanel({ onDone }: { onDone: () => void }) {
         <p className="text-[11px] font-semibold text-ink">Images &amp; video</p>
         <div className="mt-1 grid grid-cols-2 gap-1.5">
           {([
-            { id: 'economy' as const, title: 'Lowest cost', note: prices ? `~${prices.economy_image} credits an image` : 'Good images at a lower price' },
-            { id: 'quality' as const, title: 'Best quality', note: prices ? `~${prices.quality_image} credits an image (Magnific One)` : 'Magnific One images' },
+            { id: 'economy' as const, title: 'Lowest cost', note: prices ? `~${prices.economy_image} credits an image, ~${prices.video} per 5 s of video` : 'Good images and video at a lower price' },
+            { id: 'quality' as const, title: 'Best quality', note: prices ? `~${prices.quality_image} credits an image, ~${prices.quality_video ?? prices.video * 2} per 5 s of video` : 'Magnific One images, Kling 3.0 video' },
           ]).map((o) => (
             <button key={o.id} type="button" onClick={() => { setMode(o.id); if (state === 'saved') setState('idle'); }}
               className={`rounded-[10px] border px-2.5 py-2 text-left ${mode === o.id ? 'border-blue bg-pale/60' : 'border-line hover:border-blue'}`}>
@@ -981,7 +981,7 @@ function CustomInstructionsPanel({ onDone }: { onDone: () => void }) {
             </button>
           ))}
         </div>
-        <p className="mt-1 text-[10px] text-faint">Videos use the lowest-cost model either way{prices ? ` (~${prices.video} credits per 5 s)` : ''}. A model you name in chat always wins.</p>
+        <p className="mt-1 text-[10px] text-faint">A model you name in chat always wins.</p>
       </div>
       <textarea value={text} onChange={(e) => { setText(e.target.value.slice(0, max)); if (state === 'saved') setState('idle'); }} rows={6}
         placeholder={'e.g.\n• Every post needs an image.\n• We are a brand-new account.\n• Keep captions under 100 words.'}

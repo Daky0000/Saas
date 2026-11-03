@@ -33,7 +33,7 @@ import {
 } from './magnificRoutes.ts';
 import { durableMediaUrl, durableMediaUrls, getMediaStorage, storeMediaBytes } from './mediaStore.ts';
 import {
-  socialImageCredits, PLATFORM_LABEL, FORMAT_LABEL, socialCopyCredits, SOCIAL_IMAGE_MODEL, SOCIAL_IMAGE_OPTS, ECONOMY_IMAGE_MODEL, ECONOMY_IMAGE_FALLBACK, SOCIAL_VIDEO_MODEL_FROM_IMAGE, socialVideoCredits,
+  socialImageCredits, PLATFORM_LABEL, FORMAT_LABEL, socialCopyCredits, SOCIAL_IMAGE_MODEL, SOCIAL_IMAGE_OPTS, ECONOMY_IMAGE_MODEL, ECONOMY_IMAGE_FALLBACK, SOCIAL_VIDEO_MODEL_FROM_IMAGE, socialVideoCredits, socialVideoModel,
   aspectRatioFor, bestTimesGuide, isVideoFormat, validTimeZone, parsePiece, pieceSchema, publishText, slidePrompt, writingRules,
 } from './socialFormats.ts';
 import {
@@ -1605,7 +1605,7 @@ export function registerAIChatRoutes({
     res.json({
       success: true, instructions, media_mode: mediaMode, max: CUSTOM_INSTRUCTIONS_MAX,
       // What each choice costs in credits right now (cost × 1.54), for the setting's labels.
-      prices: { economy_image: socialImageCredits('economy'), quality_image: socialImageCredits('quality'), video: socialVideoCredits() },
+      prices: { economy_image: socialImageCredits('economy'), quality_image: socialImageCredits('quality'), video: socialVideoCredits('economy'), quality_video: socialVideoCredits('quality') },
     });
   });
 
@@ -1982,12 +1982,12 @@ export function registerAIChatRoutes({
               notes.push('Video needs Magnific (Admin → Magnific AI); the cover image is saved — add a video before it publishes.');
             } else if (!post.featured_image) {
               notes.push('The video was skipped because its cover image could not be made.');
-            } else if (await balance() < socialVideoCredits()) {
-              notes.push(`Not enough credits for the video (${socialVideoCredits()}); the cover image is saved.`);
+            } else if (await balance() < socialVideoCredits(mediaMode)) {
+              notes.push(`Not enough credits for the video (${socialVideoCredits(mediaMode)}); the cover image is saved.`);
             } else {
               await setItem(index, { status: 'media', progress: 'Creating the video (this takes a few minutes)', post: { ...post } });
               const v = await magnificGenerateVideo({
-                model: SOCIAL_VIDEO_MODEL_FROM_IMAGE, prompt: piece.video_prompt || piece.image_prompt || item.topic,
+                model: socialVideoModel(mediaMode), prompt: piece.video_prompt || piece.image_prompt || item.topic,
                 image_url: post.featured_image, aspect_ratio: '9:16', duration: 5,
               }, magnificKey).catch((err) => ({ url: null, error: err instanceof Error ? err.message : String(err) } as any));
               if (v?.url) {
@@ -1995,8 +1995,8 @@ export function registerAIChatRoutes({
                 // The video leads: platforms take the first media item as the post.
                 post.media_assets = [{ url: post.video_url, type: 'video' }];
                 await saveMedia();
-                await charge(socialVideoCredits(), 'chat_post_video', { post_id: id });
-                await setItem(index, { post: { ...post } }, socialVideoCredits());
+                await charge(socialVideoCredits(mediaMode), 'chat_post_video', { post_id: id });
+                await setItem(index, { post: { ...post } }, socialVideoCredits(mediaMode));
               } else {
                 logger.warn({ err: v?.error }, 'chat_batch_video_failed');
                 notes.push('The video could not be made (not charged); the cover image is saved.');

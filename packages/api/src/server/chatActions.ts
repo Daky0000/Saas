@@ -93,7 +93,7 @@ export function estimateToolCredits(name: string, input: any): CreditEstimate | 
       }
       const platforms = new Set(posts.map((p) => p.platform)).size;
       const lines = [...groups].map(([k, g]) => `${g.count} × ${k}: ${g.credits} credits`);
-      lines.push(`Includes writing (${socialCopyCredits()}/post)${images ? `, ${images} image${images === 1 ? '' : 's'} (${socialImageCredits(mode)} each)` : ''}${videos ? `, ${videos} video${videos === 1 ? '' : 's'} (${socialVideoCredits()} each)` : ''}. You're only charged for what is made.`);
+      lines.push(`Includes writing (${socialCopyCredits()}/post)${images ? `, ${images} image${images === 1 ? '' : 's'} (${socialImageCredits(mode)} each)` : ''}${videos ? `, ${videos} video${videos === 1 ? '' : 's'} (${socialVideoCredits(mode)} each)` : ''}. You're only charged for what is made.`);
       return {
         credits,
         label: `Create ${n} post${n === 1 ? '' : 's'}${platforms > 1 ? ` across ${platforms} platforms` : ` for ${PLATFORM_LABEL[posts[0].platform]}`}`,
@@ -152,7 +152,9 @@ export function defaultImageModel(input: any): string {
 
 /** The video model a chat call uses: the one asked for, else Kling 2.6 — the lowest-cost video model the Magnific API offers ($0.225 per 5 s). */
 export function defaultVideoModel(input: any): string {
-  return input?.model && MAGNIFIC_VIDEO_MODELS[input.model] ? input.model : 'kling-v2-6-pro';
+  if (input?.model && MAGNIFIC_VIDEO_MODELS[input.model]) return input.model;
+  // Best quality: Kling 3.0; Lowest cost: Kling 2.6 (the cheapest the Magnific API offers).
+  return normalizeMediaMode(input?.media_mode) === 'quality' ? 'kling-3-0' : 'kling-v2-6-pro';
 }
 
 export interface BatchPost {
@@ -306,6 +308,6 @@ export async function saveMediaMode(query: Query, userId: string, mode: MediaMod
 
 export function mediaModeBlock(mode: MediaMode): string {
   return mode === 'quality'
-    ? `## MEDIA SETTING: BEST QUALITY\nThe user chose best quality. Default images: Magnific One (magnific_one_generate or model "magnific-one"). Default video: kling-v2-6-pro. A model the user names always wins.`
+    ? `## MEDIA SETTING: BEST QUALITY\nThe user chose best quality. Default images: Magnific One (magnific_one_generate or model "magnific-one"). Default video: magnific_generate_video with model "kling-3-0". A model the user names always wins.`
     : `## MEDIA SETTING: LOWEST COST (default)\nUse the lowest-cost model that does the job unless the user names a model. Images: magnific_generate_image with model "z-image" (never magnific_one_generate, mystic, nano-banana or seedream unless asked). Video: magnific_generate_video with model "kling-v2-6-pro" (never seedance or kling 3 unless asked).`;
 }

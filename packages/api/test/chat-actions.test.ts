@@ -136,3 +136,18 @@ test('media setting: lowest cost by default — cheapest image and video models 
   assert.equal(ca.estimateToolCredits('magnific_generate_image', { model: 'z-image' })!.credits, pricing.creditsForMagnific(5), 'a model the user names is priced at its own cost × 1.54');
   assert.equal(ca.normalizeMediaMode('anything'), 'economy');
 });
+
+test('video: Lowest cost uses Kling 2.6, Best quality Kling 3.0 at about twice the price — both at cost × 1.54 or more', () => {
+  const v = 149 / 20000;
+  assert.equal(ca.defaultVideoModel({ media_mode: 'quality' }), 'kling-3-0');
+  assert.equal(ca.defaultVideoModel({ media_mode: 'economy' }), 'kling-v2-6-pro');
+  assert.equal(ca.defaultVideoModel({ media_mode: 'quality', model: 'kling-v2-6-pro' }), 'kling-v2-6-pro', 'a model the user names wins');
+  assert.equal(sf.socialVideoCredits('economy'), Math.ceil((0.225 * 1.54) / v));
+  assert.equal(sf.socialVideoCredits('quality'), Math.ceil((0.45 * 1.54) / v));
+  assert.ok(sf.socialVideoCredits('economy') * 2 >= sf.socialVideoCredits('quality') - 1, 'Lowest cost video is about half of Best quality');
+  for (const mode of ['economy', 'quality'] as const) {
+    assert.ok(sf.socialVideoCredits(mode) * v >= (mode === 'quality' ? 0.45 : 0.225) * 1.54 - 1e-9, `${mode} video never below cost × 1.54`);
+  }
+  const q = ca.estimateToolCredits('magnific_generate_video', { media_mode: 'quality' })!.credits;
+  assert.equal(q, sf.socialVideoCredits('quality'), 'the chat video tool charges what the estimate shows');
+});
