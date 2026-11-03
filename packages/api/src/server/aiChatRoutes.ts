@@ -13,7 +13,9 @@ import { startSpan } from './aiTrace.ts';
 import { nvidiaAgentLoop, nvidiaChat, nvidiaImage } from './nvidiaModels.ts';
 import { buildSharedAgentContext, invalidateSharedContext, recordAgentInsight } from './agentSharedContext.ts';
 import { aiChatLimiter } from '../middleware/rateLimiter.ts';
-import { creditsForMagnific, magnificImageCost } from './aiPricing.ts';
+import { creditsForMagnific, magnificImageCost, magnificOneCost } from './aiPricing.ts';
+import { designSystemBlock, designPromptHint, generateWithBrandKit, getDesignSystem, captureDesignSystem, saveDesignSystem, magnificChannel, type DesignSystem } from './designSystem.ts';
+import { deletePreference, listPreferences, preferencesBlock, recordPreference } from './preferenceMemory.ts';
 import { clearCalendarCacheForUser } from '../link-metadata.ts';
 import { decryptPlatformConfig } from '../integration-helpers.ts';
 import { callMagnificMcpTool } from './mcpRoutes.ts';
@@ -79,6 +81,10 @@ const CHAT_CANARY = `cnry-${createHash('sha256').update(`${process.env.JWT_SECRE
 
 const AI_CORE_RULES = `
 ---
+## MEMORY — ALWAYS ENFORCED (do not remove)
+- Before any task, check THE USER'S CUSTOM INSTRUCTIONS, then WHAT THIS USER LIKES AND DOESN'T, then THE USER'S DESIGN SYSTEM, and follow them.
+- When the user says they like or dislike something, asks you to change your work, or says "always"/"never", call remember_preference with one clear sentence (and still do what they asked).
+
 ## SOCIAL POSTS, CONTENT CALENDARS AND CREDITS — ALWAYS ENFORCED (do not remove)
 - Any request for social posts (one or many), "a content calendar", "posts for the week", a campaign → create_posts_batch, ONE call with an entry per post. Never call create_draft or schedule_post once per post for these; create_draft is only for blog articles.
 - Every post is native to ONE platform. The same idea on Instagram and LinkedIn is two entries, each in that platform's format. Never write one generic post for several platforms.
@@ -387,6 +393,19 @@ You are trained on the complete **Magnific Academy** methodology for all non-tex
    - Package repeatable Spaces into parameterized **Flows** ('action: "create_flow"' / '"run_flow"').`;
 
 const AI_TOOLS: Anthropic.Tool[] = [
+  {
+    name: 'remember_preference',
+    description: 'Save something the user likes or does not like (tone, length, emojis, hashtags, formats, platforms, colours, styles, posting times, strategies) so every agent follows it on every future task. Call it whenever the user says they like/dislike something, asks for a change to your work, or says "always"/"never". One clear sentence per call.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', description: 'like | dislike | rule' },
+        subject: { type: 'string', description: 'post | design | strategy | schedule | reply | general' },
+        note: { type: 'string', description: 'The preference in one sentence, e.g. "Never use emojis in LinkedIn posts."' },
+      },
+      required: ['kind', 'note'],
+    },
+  },
   {
     name: 'create_posts_batch',
     description: `Create native social media posts and put each on the calendar as soon as it is made — copy written for its platform, plus the images (one, or a matching set for a carousel) and video it needs, generated with Magnific. Use for any request for social posts, a content calendar, or 2+ posts. One entry = one post on ONE platform; for the same idea on Instagram and LinkedIn, add two entries (each is written natively). Give a brief, not finished text. The user sees a credit estimate (writing ${socialCopyCredits()}/post, images ${socialImageCredits()} each, videos ${socialVideoCredits()} each) and confirms before anything runs. Max ${BATCH_MAX_POSTS} posts.`,
@@ -707,6 +726,14 @@ export function registerAIChatRoutes({
 }: AIChatDeps): Router {
   const router = express.Router();
 
+  /** Magnific's own tools (Brand Kits, branded generation), called server-side with the platform key. */
+  const magnificMcp = (toolName: string, toolArgs: Record<string, unknown>) =>
+    callMagnificMcpTool(pool as any, toolName, toolArgs, (val: unknown) => {
+      const dec = decryptPlatformConfig(val as any);
+      return typeof dec === 'string' ? dec : (dec as any)?.value ?? '';
+    });
+  const q = (sql: string, params?: unknown[]) => dbQuery(sql, params);
+
   // ── Module-scoped helpers that close over deps ──────────────────────────────
 
   async function logTaskActivity(
@@ -855,6 +882,13 @@ export function registerAIChatRoutes({
 
   async function executeAITool(name: string, input: any, userId: string): Promise<any> {
     switch (name) {
+      case 'remember_preference': {
+        const kind = (['like', 'dislike', 'rule', 'change'].includes(input?.kind) ? input.kind : 'rule') as any;
+        const subject = (['post', 'design', 'strategy', 'schedule', 'reply', 'general'].includes(input?.subject) ? input.subject : 'general') as any;
+        await recordPreference(q, userId, { kind, subject, note: String(input?.note || ''), source: 'chat' });
+        invalidateSharedContext(userId);
+        return { success: true, remembered: String(input?.note || '').slice(0, 300) };
+      }
       case 'create_draft': {
         const title = String(input?.title || 'Untitled').slice(0, 255);
         const content = String(input?.content || '');
@@ -1021,8 +1055,14 @@ export function registerAIChatRoutes({
         const magnificKey = await getMagnificApiKey(pool as any);
         if (!magnificKey) return { success: false, error: 'Magnific API key is not configured in Admin → Magnific AI.' };
         // The same price the estimate card showed: Magnific's cost × 1.54.
-        const creditCost = estimateToolCredits(name, input)?.credits ?? 0;
-        const r = await magnificOneGenerate(
+        let creditCost = estimateToolCredits(name, input)?.credits ?? 0;
+        // On brand: the user's design system is already saved in Magnific as a Brand Kit (sent once, reused).
+        const branded = input?.mode !== 'draft' && !(Array.isArray(input?.reference_images) && input.reference_images.length)
+          ? await generateWithBrandKit({ query: q, userId, mcp: magnificMcp, prompt: String(input?.prompt || ''), aspectRatio: String(input?.aspect_ratio || '1:1') }).catch(() => null)
+          : null;
+        // A Brand Kit image is Magnific One at its standard tier: charged at that price (never above the estimate).
+        if (branded) creditCost = Math.min(creditCost, creditsForMagnific(magnificOneCost({ quality: 'medium', resolution: '2k' })));
+        const r = branded ? { url: branded.url as string | null, urls: [branded.url], taskId: null as string | null, error: null as string | null } : await magnificOneGenerate(
           {
             prompt: String(input?.prompt || ''),
             mode: input?.mode === 'draft' ? 'draft' : 'quality',
@@ -1045,7 +1085,7 @@ export function registerAIChatRoutes({
           [genId, userId, String(input?.prompt || ''), JSON.stringify(input ?? {}), r.taskId, r.url]
         ).catch(() => undefined);
         await chargeAICredits(userId, creditCost, 'chat_magnific_one', { gen_id: genId });
-        return { success: true, model: 'magnific-one', mode: input?.mode || 'quality', url: r.url, urls: r.urls, gen_id: genId, credits_used: creditCost };
+        return { success: true, model: 'magnific-one', mode: input?.mode || 'quality', url: r.url, urls: r.urls, gen_id: genId, credits_used: creditCost, on_brand: Boolean(branded) };
       }
       case 'magnific_generate_image': {
         const magnificKey = await getMagnificApiKey(pool as any);
@@ -1279,10 +1319,12 @@ export function registerAIChatRoutes({
       }
 
       status('Checking your workspace');
-      const [saasContext, customInstructions, mediaMode] = await Promise.all([
+      const [saasContext, customInstructions, mediaMode, designSystem, preferences] = await Promise.all([
         getUserSaaSContext(auth.userId),
         getCustomInstructions(dbQuery, auth.userId),
         getMediaMode(dbQuery, auth.userId),
+        getDesignSystem(q, auth.userId),
+        listPreferences(q, auth.userId, 40),
       ]);
 
       // Guardrails for this turn. Memories (some come from a scraped website)
@@ -1335,7 +1377,7 @@ export function registerAIChatRoutes({
       // The user's custom instructions lead the turn's context: they apply to every task.
       const localNow = new Intl.DateTimeFormat('en-GB', { timeZone: userTz, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date());
       const timeBlock = `## TIME AND SCHEDULING\nThe user's timezone: ${userTz}. Their local time now: ${localNow}.\nEvery post is SCHEDULED (never left as a draft) unless the user says otherwise. Pick each post's day and time yourself for the best reach; give scheduled_at as ISO 8601 with the user's UTC offset.\n${bestTimesGuide(userTz)}`;
-      let dynamicPrompt = [customInstructionsBlock(customInstructions), mediaModeBlock(mediaMode), timeBlock, userMemoryBlock, saasContext ? fence('workspace data', saasContext, 8000) : '', skillsPrompt].filter(Boolean).join('\n\n');
+      let dynamicPrompt = [customInstructionsBlock(customInstructions), preferencesBlock(preferences), designSystemBlock(designSystem), mediaModeBlock(mediaMode), timeBlock, userMemoryBlock, saasContext ? fence('workspace data', saasContext, 8000) : '', skillsPrompt].filter(Boolean).join('\n\n');
       const history = fitHistory(messages.slice(-16).map((m) => ({ role: m.role === 'assistant' ? 'assistant' as const : 'user' as const, content: String(m.content || '') })));
 
       // Streamed text is checked as it accumulates: once the canary from the
@@ -1586,6 +1628,82 @@ export function registerAIChatRoutes({
     }
   });
 
+  // ── Preference memory: what the user likes and doesn't ─────────────────────
+  router.get('/ai/preferences', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    res.json({ success: true, preferences: await listPreferences(q, auth.userId, 100) });
+  });
+
+  router.delete('/ai/preferences/:id', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    try {
+      await deletePreference(q, auth.userId, String(req.params.id));
+      invalidateSharedContext(auth.userId);
+      res.json({ success: true });
+    } catch {
+      res.status(500).json({ success: false, error: 'Could not forget that — please try again.' });
+    }
+  });
+
+  /** 👍 / 👎 on a reply, a post or a design, with an optional reason. */
+  router.post('/ai/feedback', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const b = (req.body ?? {}) as any;
+    const up = b.rating === 'up';
+    const subject = ['post', 'design', 'strategy', 'schedule', 'reply', 'general'].includes(b.subject) ? b.subject : 'reply';
+    const about = String(b.about || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+    const reason = String(b.reason || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    const note = `${up ? 'Liked' : 'Did not like'} ${subject === 'reply' ? 'this reply' : `this ${subject}`}${about ? `: «${about}»` : ''}${reason ? `. Why: ${reason}` : ''}`;
+    await recordPreference(q, auth.userId, { kind: up ? 'like' : 'dislike', subject, note, source: 'feedback', refId: b.ref_id ? String(b.ref_id).slice(0, 80) : null });
+    invalidateSharedContext(auth.userId);
+    res.json({ success: true });
+  });
+
+  // ── Design system (from the website; sent to Magnific once as a Brand Kit) ─
+  router.get('/ai/design-system', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    res.json({ success: true, design: await getDesignSystem(q, auth.userId) });
+  });
+
+  router.post('/ai/design-system/scan', aiChatLimiter, async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const url = String((req.body as any)?.url || '').trim();
+    if (!url) return res.status(400).json({ success: false, error: 'Enter your website address.' });
+    const design = await captureDesignSystem(q, auth.userId, url);
+    if (!design) return res.status(422).json({ success: false, error: "We couldn't read colours or fonts from that site. Check the address, or add your brand colours by hand." });
+    invalidateSharedContext(auth.userId);
+    res.json({ success: true, design: await getDesignSystem(q, auth.userId) });
+  });
+
+  /** Edit the design system (colours, fonts, rules). Changing it re-sends the Brand Kit to Magnific on the next Magnific image. */
+  router.put('/ai/design-system', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const current = await getDesignSystem(q, auth.userId);
+    const b = (req.body ?? {}) as Partial<DesignSystem>;
+    const clean = (arr: unknown, max: number) => (Array.isArray(arr) ? arr : []).slice(0, max);
+    const next: DesignSystem = {
+      brand_name: String(b.brand_name ?? current?.brand_name ?? '').slice(0, 120),
+      website_url: String(b.website_url ?? current?.website_url ?? '').slice(0, 500),
+      captured_at: current?.captured_at ?? new Date().toISOString(),
+      colors: clean(b.colors ?? current?.colors, 12).map((c: any) => ({ hex: String(c?.hex || '').slice(0, 7).toLowerCase(), role: String(c?.role || 'accent').slice(0, 30), ...(c?.name ? { name: String(c.name).slice(0, 60) } : {}) })).filter((c) => /^#[0-9a-f]{3}([0-9a-f]{3})?$/.test(c.hex)),
+      typography: clean(b.typography ?? current?.typography, 4).map((f: any) => ({ family: String(f?.family || '').slice(0, 80), use: String(f?.use || 'body').slice(0, 20) })).filter((f) => f.family),
+      logos: clean(b.logos ?? current?.logos, 3).map((l: any) => ({ url: String(l?.url || '').slice(0, 500), variant: String(l?.variant || 'primary').slice(0, 30) })).filter((l) => /^https?:\/\//.test(l.url)),
+      voice: clean(b.voice ?? current?.voice, 8).map((v) => String(v).slice(0, 80)),
+      imagery: clean(b.imagery ?? current?.imagery, 6).map((v) => String(v).slice(0, 120)),
+      description: String(b.description ?? current?.description ?? '').slice(0, 1000),
+      rules: clean(b.rules ?? current?.rules, 12).map((v) => String(v).slice(0, 200)).filter(Boolean),
+    };
+    await saveDesignSystem(q, auth.userId, next);
+    invalidateSharedContext(auth.userId);
+    res.json({ success: true, design: await getDesignSystem(q, auth.userId) });
+  });
+
   // ── Chat sessions (history) ────────────────────────────────────────────────
   router.get('/ai/chat/sessions', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
@@ -1711,11 +1829,12 @@ export function registerAIChatRoutes({
     const key = resolveTextKey(aiCfg);
     if (!key) throw new AIUnavailableError('No AI is configured — add the free NVIDIA key in Admin → NVIDIA, or a paid key in Admin → AI Assistant.');
     const model = aiCfg.provider === 'google' ? resolveGeminiModel(aiCfg.model) : FAST_MODEL;
-    const [context, instructions, magnificKey, savedMode] = await Promise.all([
+    const [context, instructions, magnificKey, savedMode, design] = await Promise.all([
       buildSharedAgentContext(userId).catch(() => ''),
       getCustomInstructions(dbQuery, userId),
       getMagnificApiKey(pool as any).catch(() => null),
       getMediaMode(dbQuery, userId),
+      getDesignSystem(q, userId),
     ]);
     // The setting at the time the estimate was shown (falls back to the saved one).
     const mediaMode: MediaMode = args?.media_mode ? normalizeMediaMode(args.media_mode) : savedMode;
@@ -1762,9 +1881,14 @@ export function registerAIChatRoutes({
       const drawn = await nvidiaImage({ prompt, width: w, height: h }).catch(() => null);
       return drawn ? { url: await storeMediaBytes(drawn.bytes, drawn.mimeType, userId, { jpeg: true } as any), charged: 0 } : null;
     };
-    const drawImage = async (prompt: string, aspect: string, refs: string[]): Promise<{ url: string; charged: number } | null> => {
+    const drawImage = async (rawPrompt: string, aspect: string, refs: string[], channel?: string): Promise<{ url: string; charged: number } | null> => {
       const withRefs = refs.length ? { reference_images: refs.slice(0, 3) } : {};
+      // Cheaper models cannot take a Brand Kit, so the brand's palette and type ride in the prompt.
+      const prompt = [rawPrompt, designPromptHint(design)].filter(Boolean).join(' ');
       if (mediaMode === 'quality') {
+        // Magnific One through the user's Brand Kit: the design system is sent once and reused.
+        const branded = await generateWithBrandKit({ query: q, userId, mcp: magnificMcp, prompt: rawPrompt, aspectRatio: aspect, channel }).catch(() => null);
+        if (branded) return { url: await durableMediaUrl(branded.url, userId), charged: socialImageCredits('quality') };
         return (await tryMagnific(SOCIAL_IMAGE_MODEL, { ...SOCIAL_IMAGE_OPTS, ...withRefs }, prompt, aspect))
           ?? (await tryMagnific(ECONOMY_IMAGE_MODEL, withRefs, prompt, aspect))
           ?? (await tryFree(prompt, aspect));
@@ -1839,7 +1963,7 @@ export function registerAIChatRoutes({
             if (magnificKey && await balance() < socialImageCredits(mediaMode)) { notes.push('Ran out of credits before every image was made.'); break; }
             await setItem(index, { status: 'media', progress: prompts.length > 1 ? `Image ${k + 1} of ${prompts.length}` : 'Creating the image', post: { ...post } });
             const refs = item.format === 'carousel' && post.media_assets[0]?.url ? [post.media_assets[0].url] : [];
-            const img = await drawImage(prompts[k], aspect, refs).catch(() => null);
+            const img = await drawImage(prompts[k], aspect, refs, magnificChannel(item.platform, item.format)).catch(() => null);
             if (!img) { notes.push(magnificKey ? `Image ${k + 1} could not be made (not charged).` : 'Images need Magnific (Admin → Magnific AI) or media storage — none were made.'); if (!magnificKey) break; continue; }
             if (img.charged) await charge(img.charged, 'chat_post_image', { post_id: id });
             post.media_assets.push({ url: img.url, type: 'image', ...(piece.slides[k] ? { caption: piece.slides[k].headline } : {}) });

@@ -170,6 +170,7 @@ export const DEFAULT_TOOL_RULES: Record<string, ToolRule> = {
   get_my_tasks: { risk: 'read', perTurn: 4 },
   get_my_projects: { risk: 'read', perTurn: 4 },
   create_draft: { risk: 'write', perTurn: 5, maxArgChars: 20_000 },
+  remember_preference: { risk: 'write', perTurn: 6, maxArgChars: 1_000 },
   create_task: { risk: 'write', perTurn: 8, maxArgChars: 4_000 },
   update_task_status: { risk: 'write', perTurn: 10, maxArgChars: 1_000 },
   schedule_post: { risk: 'external', perTurn: 5, maxArgChars: 20_000 },

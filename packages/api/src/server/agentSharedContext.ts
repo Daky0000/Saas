@@ -1,4 +1,6 @@
 import type { Pool } from 'pg';
+import { getDesignSystem, designSystemBlock } from './designSystem.ts';
+import { listPreferences, onPreferenceChange, preferencesBlock } from './preferenceMemory.ts';
 import { dbQuery } from '../db.ts';
 import { logger } from '../logger.ts';
 
@@ -32,6 +34,9 @@ const CONTEXT_TTL_MS = 10 * 60 * 1000;
 export function invalidateSharedContext(userId: string): void {
   contextCache.delete(userId);
 }
+
+// A newly learned like/dislike reaches every agent on its next task.
+onPreferenceChange(invalidateSharedContext);
 
 export async function buildSharedAgentContext(userId: string): Promise<string> {
   const cached = contextCache.get(userId);
@@ -161,6 +166,20 @@ export async function buildSharedAgentContext(userId: string): Promise<string> {
       [userId]
     );
     if (rows.length) parts.push(`About the user (personalization):\n${rows.map((r: any) => `- [${r.category}] ${r.title}: ${String(r.content).slice(0, 160)}`).join('\n')}`);
+  });
+
+  // The design system captured from the user's website (colours, fonts, voice).
+  await safe(async () => {
+    const ds = await getDesignSystem(dbQuery as any, userId);
+    const block = designSystemBlock(ds);
+    if (block) parts.push(block.replace(/^## /, ''));
+  });
+
+  // What the user likes and doesn't, learned from edits, deletions, reviews and feedback.
+  await safe(async () => {
+    const prefs = await listPreferences(dbQuery as any, userId, 25);
+    const block = preferencesBlock(prefs, 25);
+    if (block) parts.push(block.replace(/^## /, ''));
   });
 
   // Liked-image style profile — the user's visual taste.

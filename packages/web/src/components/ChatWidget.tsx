@@ -874,6 +874,9 @@ function BatchCard({ msg, busy, onResume }: { msg: BatchMessage; busy: boolean; 
               </button>
               {item.status === 'failed' && item.error && <p className="pl-5 text-[10.5px] text-red-500">{item.error}</p>}
               {item.status === 'done' && item.note && <p className="pl-5 text-[10.5px] text-amber-700">{item.note}</p>}
+              {item.status === 'done' && (
+                <div className="pl-5"><FeedbackButtons subject="post" about={`${meta ? `${meta.label} ${SOCIAL_FORMAT_LABEL[fmt] ?? ''}: ` : ''}${item.post?.title || item.topic}`} refId={item.post?.id} /></div>
+              )}
               {openIdx === item.index && (
                 <div className="mt-1 space-y-1.5 rounded-lg bg-slate-50 p-2">
                   {media.length > 0 && (
@@ -1000,7 +1003,143 @@ function CustomInstructionsPanel({ onDone }: { onDone: () => void }) {
       </div>
       {state === 'saved' && <p className="text-[11px] font-medium text-emerald-700">✓ Saved — every agent will follow these from your next task.</p>}
       {state === 'error' && <p className="text-[11px] text-red-600">Couldn't save — check your connection and press Save again.</p>}
+      <DesignSystemSection />
+      <LearnedPreferences />
     </div>
+  );
+}
+
+const authJson = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('auth_token')}` });
+
+type DesignSystemView = {
+  brand_name: string; website_url: string; colors: Array<{ hex: string; role: string }>; typography: Array<{ family: string; use: string }>;
+  logos: Array<{ url: string }>; rules: string[]; magnific_kit_id?: string | null; magnific_synced?: boolean;
+};
+
+/** The design system captured from the website, and whether Magnific already has it as a Brand Kit. */
+function DesignSystemSection() {
+  const [design, setDesign] = useState<DesignSystemView | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [url, setUrl] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [rule, setRule] = useState('');
+  useEffect(() => {
+    fetch(`${getApiBaseUrl()}/api/ai/design-system`, { headers: authJson() })
+      .then((r) => (r.ok ? r.json() : null)).then((d) => { setDesign(d?.design ?? null); setUrl(d?.design?.website_url ?? ''); })
+      .catch(() => undefined).finally(() => setLoading(false));
+  }, []);
+  const scan = async () => {
+    setScanning(true); setError(null);
+    try {
+      const r = await fetch(`${getApiBaseUrl()}/api/ai/design-system/scan`, { method: 'POST', headers: authJson(), body: JSON.stringify({ url }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.error || 'Could not scan that site.');
+      setDesign(d.design);
+    } catch (e: any) { setError(e?.message || 'Could not scan that site.'); } finally { setScanning(false); }
+  };
+  const addRule = async () => {
+    const text = rule.trim();
+    if (!text || !design) return;
+    const r = await fetch(`${getApiBaseUrl()}/api/ai/design-system`, { method: 'PUT', headers: authJson(), body: JSON.stringify({ rules: [...(design.rules ?? []), text] }) });
+    const d = await r.json().catch(() => null);
+    if (d?.design) { setDesign(d.design); setRule(''); }
+  };
+  return (
+    <div className="space-y-1.5 border-t border-line pt-2.5">
+      <p className="text-xs font-semibold text-ink">Design system</p>
+      {loading ? <p className="text-[11px] text-muted">Loading…</p> : design ? (
+        <div className="space-y-1.5">
+          <p className="text-[10.5px] text-muted">From {design.website_url || 'your website'} — every image and agent uses it.</p>
+          <div className="flex flex-wrap gap-1">
+            {design.colors.map((c) => (
+              <span key={c.hex + c.role} title={`${c.role} ${c.hex}`} className="flex items-center gap-1 rounded-full border border-line px-1.5 py-0.5 text-[10px] text-ink">
+                <span className="h-3 w-3 rounded-full border border-black/10" style={{ background: c.hex }} />{c.hex}
+              </span>
+            ))}
+          </div>
+          {design.typography.length > 0 && <p className="text-[10.5px] text-ink">Fonts: {design.typography.map((f) => `${f.family} (${f.use})`).join(', ')}</p>}
+          {design.rules?.length > 0 && <ul className="list-disc pl-4 text-[10.5px] text-ink">{design.rules.map((r) => <li key={r}>{r}</li>)}</ul>}
+          <p className={`text-[10.5px] ${design.magnific_synced ? 'text-emerald-700' : 'text-muted'}`}>
+            {design.magnific_synced ? '✓ Saved in Magnific as your Brand Kit — reused for every Magnific image.' : 'Sent to Magnific as a Brand Kit the first time you make a Magnific image, then reused.'}
+          </p>
+          <div className="flex gap-1">
+            <input value={rule} onChange={(e) => setRule(e.target.value)} placeholder="Add a design rule, e.g. Always dark backgrounds"
+              className="min-w-0 flex-1 rounded-lg border border-line bg-soft px-2 py-1 text-[11px] outline-none focus:border-blue" />
+            <button type="button" onClick={() => void addRule()} disabled={!rule.trim()} className="rounded-lg border border-line px-2 text-[11px] font-semibold text-ink disabled:opacity-40">Add</button>
+          </div>
+        </div>
+      ) : <p className="text-[10.5px] text-muted">Not captured yet. Scan your website to save your colours, fonts and logo.</p>}
+      <div className="flex gap-1">
+        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="yourwebsite.com"
+          className="min-w-0 flex-1 rounded-lg border border-line bg-soft px-2 py-1 text-[11px] outline-none focus:border-blue" />
+        <button type="button" onClick={() => void scan()} disabled={!url.trim() || scanning}
+          className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 text-[11px] font-semibold text-white disabled:opacity-50">
+          {scanning && <Loader2 size={11} className="animate-spin" />}{design ? 'Rescan' : 'Scan'}
+        </button>
+      </div>
+      {error && <p className="text-[10.5px] text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+type LearnedItem = { id: string; kind: string; subject: string; note: string; created_at: string };
+
+/** What the agents have learned from the user's edits, deletions, reviews and feedback — removable. */
+function LearnedPreferences() {
+  const [items, setItems] = useState<LearnedItem[] | null>(null);
+  useEffect(() => {
+    fetch(`${getApiBaseUrl()}/api/ai/preferences`, { headers: authJson() })
+      .then((r) => (r.ok ? r.json() : null)).then((d) => setItems(Array.isArray(d?.preferences) ? d.preferences : [])).catch(() => setItems([]));
+  }, []);
+  const forget = (id: string) => {
+    setItems((list) => (list ?? []).filter((x) => x.id !== id));
+    void fetch(`${getApiBaseUrl()}/api/ai/preferences/${encodeURIComponent(id)}`, { method: 'DELETE', headers: authJson() }).catch(() => undefined);
+  };
+  const icon: Record<string, string> = { like: '👍', dislike: '👎', change: '✏️', rule: '📌' };
+  return (
+    <div className="space-y-1.5 border-t border-line pt-2.5">
+      <p className="text-xs font-semibold text-ink">What I've learned about you</p>
+      <p className="text-[10.5px] text-muted">From your edits, deletions, reviews and 👍/👎 — every agent checks this before working. Remove anything that's wrong.</p>
+      {items === null ? <p className="text-[11px] text-muted">Loading…</p> : items.length === 0 ? (
+        <p className="text-[10.5px] text-faint">Nothing yet. Edit or delete a post, rate a reply, or tell me what you like.</p>
+      ) : (
+        <ul className="max-h-48 space-y-1 overflow-y-auto">
+          {items.map((it) => (
+            <li key={it.id} className="group flex items-start gap-1.5 rounded-lg bg-soft px-2 py-1 text-[10.5px] text-ink">
+              <span className="shrink-0">{icon[it.kind] ?? '•'}</span>
+              <span className="min-w-0 flex-1 break-words">{it.note}</span>
+              <button type="button" onClick={() => forget(it.id)} aria-label="Forget this" className="shrink-0 text-faint hover:text-red-500"><X size={11} /></button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** 👍 / 👎 under a reply or a post; 👎 asks what to change. Saved to the user's preference memory. */
+function FeedbackButtons({ subject, about, refId }: { subject: 'reply' | 'post'; about: string; refId?: string }) {
+  const [sent, setSent] = useState<'up' | 'down' | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState('');
+  const send = (rating: 'up' | 'down', why = '') => {
+    setSent(rating); setAsking(false);
+    void fetch(`${getApiBaseUrl()}/api/ai/feedback`, { method: 'POST', headers: authJson(), body: JSON.stringify({ rating, subject, about: about.slice(0, 240), reason: why, ref_id: refId }) }).catch(() => undefined);
+  };
+  if (sent) return <span className="text-[10px] text-faint">{sent === 'up' ? '👍 Noted — I\'ll do more like this.' : '👎 Noted — I\'ll avoid this next time.'}</span>;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      <button type="button" onClick={() => send('up')} aria-label="I like this" className="rounded px-1 text-[11px] text-faint hover:bg-soft hover:text-ink">👍</button>
+      <button type="button" onClick={() => setAsking(true)} aria-label="I don't like this" className="rounded px-1 text-[11px] text-faint hover:bg-soft hover:text-ink">👎</button>
+      {asking && (
+        <span className="flex items-center gap-1">
+          <input autoFocus value={reason} onChange={(e) => setReason(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') send('down', reason); }}
+            placeholder="What should change? (optional)" className="w-44 rounded border border-line bg-white px-1.5 py-0.5 text-[10.5px] outline-none focus:border-blue" />
+          <button type="button" onClick={() => send('down', reason)} className="text-[10.5px] font-semibold text-indigo-600">Save</button>
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -2140,6 +2279,9 @@ export default function ChatWidget() {
                             : <span className="inline-block h-3 w-7 animate-pulse rounded bg-slate-300" />}
                         </div>
                       </div>
+                    )}
+                    {msg.kind === 'text' && msg.role === 'assistant' && !msg.failed && msg.content && !(loading && msg.id === messages[messages.length - 1]?.id) && (
+                      <div className="pl-8 pt-0.5"><FeedbackButtons subject="reply" about={msg.content} refId={msg.id} /></div>
                     )}
                   </div>
                 ))}

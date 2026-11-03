@@ -1,5 +1,7 @@
 import express from 'express';
 import { GOOGLE_IMAGE_USD, creditsForMagnific, creditsForUsd, magnificImageCost, magnificOneCost } from './aiPricing.ts';
+import { designPromptHint, generateWithBrandKit, getDesignSystem } from './designSystem.ts';
+import { callMagnificMcpTool } from './mcpRoutes.ts';
 import { getMediaMode, type MediaMode } from './chatActions.ts';
 import type { Router, Response } from 'express';
 import type { Request } from '../types/http.ts';
@@ -140,7 +142,10 @@ async function storeGeneratedImage(base64Data: string, mimeType: string): Promis
  * NVIDIA model costs nothing). 'economy' (the default) tries the cheapest
  * first; 'quality' starts with Magnific One.
  */
-export async function generateFeaturedImage(prompt: string, mode: MediaMode = 'economy'): Promise<{ url: string; credits: number; model: string } | null> {
+export async function generateFeaturedImage(rawPrompt: string, mode: MediaMode = 'economy', ctx: { userId?: string; pool?: Pool | null } = {}): Promise<{ url: string; credits: number; model: string } | null> {
+  // The user's design system: Magnific One gets it as the saved Brand Kit; other models get a palette/type hint.
+  const design = ctx.userId ? await getDesignSystem((sql, p) => dbQuery(sql, p as any[]), ctx.userId) : null;
+  const prompt = [rawPrompt, designPromptHint(design)].filter(Boolean).join(' ');
   const magnificKey = (await getPlatformKey('magnific', 'apiKey')) || (await getPlatformKey('freepik', 'apiKey')) || process.env.MAGNIFIC_API_KEY || process.env.FREEPIK_API_KEY;
   const googleKey = (await getPlatformKey('google')) || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
   const openaiKey = (await getPlatformKey('openai')) || process.env.OPENAI_API_KEY;
@@ -198,8 +203,21 @@ export async function generateFeaturedImage(prompt: string, mode: MediaMode = 'e
   };
 
   // Cheapest first: free NVIDIA ($0) → Magnific Z-Image ($0.005) → Flux.1 ($0.01) → Gemini ($0.039) → OpenAI ($0.129) → Magnific One ($0.18).
+  const brandKit: Attempt = {
+    model: 'magnific:magnific-one (brand kit)',
+    credits: () => creditsForMagnific(magnificOneCost({ quality: 'medium', resolution: '2k' })),
+    run: async () => {
+      if (!ctx.userId || !design) return null;
+      const mcp = (tool: string, args: Record<string, unknown>) => callMagnificMcpTool(ctx.pool ?? null, tool, args, (val: unknown) => {
+        const dec = decryptPlatformConfig(val as any);
+        return typeof dec === 'string' ? dec : (dec as any)?.value ?? '';
+      });
+      const r = await generateWithBrandKit({ query: (sql, p) => dbQuery(sql, p as any[]), userId: ctx.userId, mcp, prompt: rawPrompt, aspectRatio: '1:1', channel: 'social' });
+      return r ? durableMediaUrl(r.url, 'content-plan', { jpeg: true }) : null;
+    },
+  };
   const order: Attempt[] = mode === 'quality'
-    ? [magnific('magnific-one', { quality: 'medium', resolution: '2k' }), magnific('mystic'), free, gemini, openai]
+    ? [brandKit, magnific('magnific-one', { quality: 'medium', resolution: '2k' }), magnific('mystic'), free, gemini, openai]
     : [free, magnific('z-image'), magnific('flux-dev'), gemini, openai, magnific('magnific-one', { quality: 'medium', resolution: '2k' })];
   for (const a of order) {
     try {
@@ -348,7 +366,7 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
       const wantsImage = imageMode === 'always' || (imageMode === 'auto' && piece.needs_image !== false && Boolean(piece.image_prompt));
       const mediaMode = await getMediaMode(dbQuery, plan.user_id);
       const drawnImage = wantsImage && piece.image_prompt
-        ? await cp.step<{ url: string; credits: number; model: string } | string | null>('image', () => generateFeaturedImage(String(piece.image_prompt), mediaMode))
+        ? await cp.step<{ url: string; credits: number; model: string } | string | null>('image', () => generateFeaturedImage(String(piece.image_prompt), mediaMode, { userId: plan.user_id, pool }))
         : null;
       // (A run resumed from before this change stored just the URL; it was a Magnific One image.)
       const imageUrl = typeof drawnImage === 'string' ? drawnImage : drawnImage?.url ?? null;

@@ -1,4 +1,7 @@
 import { getTenantControls, upsertTenantControls, getTenantUsageLedger, type JobAccounting } from './billingAndBudgetService.ts';
+import { dbQuery } from '../../db.ts';
+import { recordPreference } from '../preferenceMemory.ts';
+import { captureDesignSystem } from '../designSystem.ts';
 import { getAutopilotProviderStatus } from './autopilotProviderBridge.ts';
 import { verifyDeliveryToken, type AssetStorageDriver } from './assetStorage.ts';
 import { verifyDeliveryOverHttps, type DeliveryVerifier, type MediaFetcher } from './assetPipeline.ts';
@@ -390,6 +393,8 @@ export function registerAutopilotRoutes(deps: AutopilotRoutesDeps) {
       }
 
       const scan = await scanWebsiteForBrandCandidates(rawUrl, deps.websiteFetcher);
+      // The design system (colours, fonts, logo, voice) is saved for every agent and for Magnific's Brand Kit.
+      void captureDesignSystem((sql, p) => dbQuery(sql, p as any[]), tenant.userId, scan.website_url, undefined, scan);
 
       // Ensure a draft BrandProfile exists (always `needs_review` until customer approves!)
       const existingBrand = await repo.getBrandProfile(tenant.tenantId);
@@ -1275,6 +1280,15 @@ export function registerAutopilotRoutes(deps: AutopilotRoutesDeps) {
           actorName: req.body?.actor_name,
           notes: req.body?.notes,
         });
+        // Reviews teach every agent what this user wants (and doesn't).
+        if (targetState === 'rejected' || targetState === 'needs_changes' || targetState === 'approved') {
+          const it: any = updated;
+          const what = `the ${String(it?.format || 'content').replace(/_/g, ' ')} "${String(it?.title || it?.hook || '').slice(0, 80)}"${Array.isArray(it?.target_channels) && it.target_channels.length ? ` for ${it.target_channels.join(', ')}` : ''}`;
+          const notes = String(req.body?.notes || '').trim().slice(0, 400);
+          void recordPreference((sql, p) => dbQuery(sql, p as any[]), tenant.userId, targetState === 'approved'
+            ? { kind: 'like', subject: 'design', source: 'autopilot_approve', refId: req.params.id, note: `Approved ${what}${it?.hook ? ` — hook: «${String(it.hook).slice(0, 120)}»` : ''}` }
+            : { kind: targetState === 'rejected' ? 'dislike' : 'change', subject: 'design', source: `autopilot_${targetState}`, refId: req.params.id, note: `${targetState === 'rejected' ? 'Rejected' : 'Sent back'} ${what}${notes ? `. Reason: ${notes}` : ''}` });
+        }
         return res.json({ success: true, item: updated });
       } catch (err: any) {
         if (err instanceof AutopilotLifecycleError) {

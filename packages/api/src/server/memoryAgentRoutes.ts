@@ -1,4 +1,5 @@
 import express from 'express';
+import { captureDesignSystem } from './designSystem.ts';
 import type { Router, Response } from 'express';
 import type { Request } from '../types/http.ts';
 import axios from 'axios';
@@ -313,6 +314,9 @@ Generate 20-35 diverse, specific memories covering all categories. No markdown, 
     ].filter((j): j is ScrapeJob => Boolean(j.url.trim()));
 
     if (jobs.length === 0) return res.status(400).json({ error: 'Please provide at least one URL to scrape' });
+
+    // The website's design system is captured alongside its content (colours, fonts, logo, voice).
+    if (website?.trim()) void captureDesignSystem((sql, p) => dbQuery(sql, p as any[]), auth.userId, website.trim());
 
     const apiToken = await getApifyToken();
     if (!apiToken) return res.status(503).json({ error: 'Apify not configured — ask your admin to add the API key in Admin → Integrations → Apify' });
