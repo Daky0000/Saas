@@ -13,7 +13,7 @@ import { startSpan } from './aiTrace.ts';
 import { nvidiaAgentLoop, nvidiaChat, nvidiaImage } from './nvidiaModels.ts';
 import { buildSharedAgentContext, invalidateSharedContext, recordAgentInsight } from './agentSharedContext.ts';
 import { aiChatLimiter } from '../middleware/rateLimiter.ts';
-import { creditsForMagnific, magnificImageCost, magnificOneCost } from './aiPricing.ts';
+import { creditsForMagnific, economyImageCharge, magnificImageCost, magnificOneCost } from './aiPricing.ts';
 import { designSystemBlock, designPromptHint, generateWithBrandKit, getDesignSystem, captureDesignSystem, saveDesignSystem, magnificChannel, type DesignSystem } from './designSystem.ts';
 import { deletePreference, listPreferences, preferencesBlock, recordPreference } from './preferenceMemory.ts';
 import { clearCalendarCacheForUser } from '../link-metadata.ts';
@@ -1437,7 +1437,7 @@ export function registerAIChatRoutes({
           res.end();
           return;
         }
-        status('The free models are busy — switching to the backup AI');
+        status('Switching to the backup AI');
         if (free.brief) dynamicPrompt = [dynamicPrompt, free.brief].filter(Boolean).join('\n\n');
       }
 
@@ -1871,7 +1871,10 @@ export function registerAIChatRoutes({
     const tryMagnific = async (model: string, opts: Record<string, unknown>, prompt: string, aspect: string): Promise<{ url: string; charged: number } | null> => {
       if (!magnificKey) return null;
       const r = await magnificGenerateImage(model, prompt, aspect, magnificKey, undefined, opts as any).catch((err) => ({ url: null, error: String(err) } as any));
-      if (r?.url) return { url: await durableMediaUrl(r.url, userId), charged: creditsForMagnific(magnificImageCost(model, opts as any)) };
+      if (r?.url) {
+        const cost = creditsForMagnific(magnificImageCost(model, opts as any));
+        return { url: await durableMediaUrl(r.url, userId), charged: model === SOCIAL_IMAGE_MODEL ? cost : economyImageCharge(cost) };
+      }
       logger.warn({ err: r?.error, model }, 'chat_batch_image_failed');
       return null;
     };
@@ -1879,7 +1882,8 @@ export function registerAIChatRoutes({
       if (!getMediaStorage()) return null;
       const [w, h] = aspect === '9:16' ? [768, 1344] : aspect === '4:5' ? [1024, 1280] : aspect === '16:9' ? [1344, 768] : aspect === '2:3' ? [832, 1216] : [1024, 1024];
       const drawn = await nvidiaImage({ prompt, width: w, height: h }).catch(() => null);
-      return drawn ? { url: await storeMediaBytes(drawn.bytes, drawn.mimeType, userId, { jpeg: true } as any), charged: 0 } : null;
+      // Charged like any Lowest-cost image (half the Best-quality price).
+      return drawn ? { url: await storeMediaBytes(drawn.bytes, drawn.mimeType, userId, { jpeg: true } as any), charged: economyImageCharge(0) } : null;
     };
     const drawImage = async (rawPrompt: string, aspect: string, refs: string[], channel?: string): Promise<{ url: string; charged: number } | null> => {
       const withRefs = refs.length ? { reference_images: refs.slice(0, 3) } : {};

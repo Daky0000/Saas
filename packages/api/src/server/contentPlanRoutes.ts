@@ -1,5 +1,5 @@
 import express from 'express';
-import { GOOGLE_IMAGE_USD, creditsForMagnific, creditsForUsd, magnificImageCost, magnificOneCost } from './aiPricing.ts';
+import { GOOGLE_IMAGE_USD, creditsForMagnific, creditsForUsd, economyImageCharge, economyImageCredits, magnificImageCost, magnificOneCost } from './aiPricing.ts';
 import { designPromptHint, generateWithBrandKit, getDesignSystem } from './designSystem.ts';
 import { callMagnificMcpTool } from './mcpRoutes.ts';
 import { getMediaMode, type MediaMode } from './chatActions.ts';
@@ -60,7 +60,7 @@ const RATE_QA_PER_POST = 1;
 /** A featured image, priced for planning: the lowest-cost paid model by default (Magnific Z-Image), Magnific One on "best quality" — cost × 1.54 (server/aiPricing.ts). */
 const ratePerImage = (mode: MediaMode = 'economy') => mode === 'quality'
   ? creditsForMagnific(magnificOneCost({ quality: 'medium', resolution: '2k' }))
-  : creditsForMagnific(magnificImageCost('z-image'));
+  : economyImageCredits();
 
 // Pieces per day a plan may ask for. The DB constraint matches.
 export const MAX_PLAN_PER_DAY = 48;
@@ -222,7 +222,8 @@ export async function generateFeaturedImage(rawPrompt: string, mode: MediaMode =
   for (const a of order) {
     try {
       const url = await a.run();
-      if (url) return { url, credits: a.credits(), model: a.model };
+      // Lowest cost: half the Best-quality price for any model that draws it (never below that model's cost × 1.54).
+      if (url) return { url, credits: mode === 'quality' ? a.credits() : economyImageCharge(a.credits()), model: a.model };
     } catch (e) {
       logger.warn({ e: e instanceof Error ? e.message : e, model: a.model }, 'content_plan_image_attempt_failed');
     }

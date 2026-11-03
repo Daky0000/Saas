@@ -1,4 +1,4 @@
-import { POST_COPY_WORST_USD, creditsForMagnific, creditsForUsd, magnificImageCost, magnificVideoCost } from './aiPricing.ts';
+import { POST_COPY_WORST_USD, creditsForMagnific, creditsForUsd, economyImageCredits, magnificImageCost, magnificVideoCost } from './aiPricing.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Social post formats: what each platform's post looks like, how to write it,
@@ -38,11 +38,11 @@ export const SOCIAL_VIDEO_SECONDS = 5;
 // Prices are the provider cost × 1.54, in credits (server/aiPricing.ts).
 /** Writing one post: free models normally; priced for the worst case on the paid fallback, never below 2. */
 export function socialCopyCredits(): number { return Math.max(2, creditsForUsd(POST_COPY_WORST_USD)); }
-/** One image as the estimate shows it: the planned model's price (a free model, when used, is not charged). */
+/** One image: Best quality = Magnific One × 1.54; Lowest cost = half that, whatever model draws it. */
 export function socialImageCredits(mode: 'economy' | 'quality' = 'economy'): number {
   return mode === 'quality'
     ? creditsForMagnific(magnificImageCost(SOCIAL_IMAGE_MODEL, SOCIAL_IMAGE_OPTS))
-    : creditsForMagnific(magnificImageCost(ECONOMY_IMAGE_MODEL));
+    : economyImageCredits();
 }
 /** A video is animated from its cover image, so a reel costs a cover image plus this. */
 export function socialVideoCredits(): number { return creditsForMagnific(magnificVideoCost(SOCIAL_VIDEO_MODEL_FROM_IMAGE, { duration: SOCIAL_VIDEO_SECONDS, resolution: '1080p' })); }

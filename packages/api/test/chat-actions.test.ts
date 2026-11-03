@@ -107,7 +107,10 @@ test('pricing: every AI cost is charged at cost × 1.54 or more, at the cheapest
   for (const model of ['seedance-2-5', 'kling-v2-6-pro', 'ltx-2-pro']) for (const d of [5, 10, 15]) check(pricing.magnificVideoCost(model, { duration: d }) * 0.001, `${model} ${d}s`);
   check(pricing.magnificLipSyncCost() * 0.001, 'lip sync');
   // Exact values for the social defaults: lowest cost = Magnific Z-Image (5 ≈ $0.005); best quality = Magnific One 2k medium (180); Kling 2.6 5 s (225).
-  assert.equal(sf.socialImageCredits(), Math.ceil((0.005 * 1.54) / v));
+  // Lowest cost: half the Best-quality image price, whatever model draws it.
+  assert.equal(sf.socialImageCredits(), Math.floor(Math.ceil((0.18 * 1.54) / v) / 2));
+  assert.equal(pricing.economyImageCharge(0), sf.socialImageCredits(), 'an image that cost nothing is still half price');
+  assert.equal(pricing.economyImageCharge(500), 500, 'never below the model cost × 1.54');
   assert.equal(sf.socialImageCredits('quality'), Math.ceil((0.18 * 1.54) / v));
   assert.equal(sf.socialVideoCredits(), Math.ceil((0.225 * 1.54) / v));
   assert.equal(pricing.creditsForUsd(0), 0);
@@ -128,6 +131,8 @@ test('media setting: lowest cost by default — cheapest image and video models 
   assert.equal(ca.defaultVideoModel({ image_url: 'x' }), 'kling-v2-6-pro');
   const economy = ca.estimateToolCredits('create_posts_batch', { posts: [{ platform: 'instagram', format: 'carousel', slides: 5, topic: 't' }] })!.credits;
   const quality = ca.estimateToolCredits('create_posts_batch', { media_mode: 'quality', posts: [{ platform: 'instagram', format: 'carousel', slides: 5, topic: 't' }] })!.credits;
-  assert.ok(economy < quality / 5, `economy ${economy} vs quality ${quality}`);
+  assert.ok(economy < quality, `economy ${economy} vs quality ${quality}`);
+  assert.equal(ca.estimateToolCredits('magnific_generate_image', {})!.credits, pricing.economyImageCredits(), 'default image on Lowest cost: half the Best-quality price');
+  assert.equal(ca.estimateToolCredits('magnific_generate_image', { model: 'z-image' })!.credits, pricing.creditsForMagnific(5), 'a model the user names is priced at its own cost × 1.54');
   assert.equal(ca.normalizeMediaMode('anything'), 'economy');
 });

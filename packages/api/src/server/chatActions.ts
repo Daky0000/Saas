@@ -4,7 +4,7 @@ import {
   ECONOMY_IMAGE_MODEL, bestSlot, validTimeZone, FORMAT_LABEL, socialImageCredits, PLATFORM_LABEL, socialCopyCredits, socialVideoCredits, clampSlides, mediaPlan,
   normalizeFormat, normalizePlatform, postCredits, type SocialFormat, type SocialPlatform,
 } from './socialFormats.ts';
-import { creditsForMagnific, magnificAudioCost, magnificEditCost, magnificImageCost, magnificLipSyncCost, magnificOneCost, magnificVideoCost } from './aiPricing.ts';
+import { creditsForMagnific, economyImageCharge, magnificAudioCost, magnificEditCost, magnificImageCost, magnificLipSyncCost, magnificOneCost, magnificVideoCost } from './aiPricing.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chat sessions (history) and credit-gated actions.
@@ -93,7 +93,7 @@ export function estimateToolCredits(name: string, input: any): CreditEstimate | 
       }
       const platforms = new Set(posts.map((p) => p.platform)).size;
       const lines = [...groups].map(([k, g]) => `${g.count} × ${k}: ${g.credits} credits`);
-      lines.push(`Includes writing (${socialCopyCredits()}/post)${images ? `, ${images} image${images === 1 ? '' : 's'} (${socialImageCredits(mode)} each${mode === 'economy' ? ', lowest-cost model' : ', Magnific One'})` : ''}${videos ? `, ${videos} video${videos === 1 ? '' : 's'} (${socialVideoCredits()} each)` : ''}. You're only charged for what is made.`);
+      lines.push(`Includes writing (${socialCopyCredits()}/post)${images ? `, ${images} image${images === 1 ? '' : 's'} (${socialImageCredits(mode)} each)` : ''}${videos ? `, ${videos} video${videos === 1 ? '' : 's'} (${socialVideoCredits()} each)` : ''}. You're only charged for what is made.`);
       return {
         credits,
         label: `Create ${n} post${n === 1 ? '' : 's'}${platforms > 1 ? ` across ${platforms} platforms` : ` for ${PLATFORM_LABEL[posts[0].platform]}`}`,
@@ -108,7 +108,9 @@ export function estimateToolCredits(name: string, input: any): CreditEstimate | 
     }
     case 'magnific_generate_image': {
       const model = defaultImageModel(input);
-      const credits = creditsForMagnific(magnificImageCost(model, { resolution: input?.resolution }));
+      const cost = creditsForMagnific(magnificImageCost(model, { resolution: input?.resolution }));
+      // No model named on Lowest cost: half the Best-quality image price (never below the model's own cost × 1.54).
+      const credits = !input?.model && normalizeMediaMode(input?.media_mode) === 'economy' ? economyImageCharge(cost) : cost;
       return { credits, label: `Generate an image (${model})`, lines: [`${model} image${input?.resolution === '4k' ? ' (4K)' : ''}: ${credits} credits`] };
     }
     case 'magnific_edit_image': {

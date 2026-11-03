@@ -1,5 +1,5 @@
 import express from 'express';
-import { creditsForMagnific, magnificAudioCost, magnificImageCost, magnificLipSyncCost, magnificVideoCost } from './aiPricing.ts';
+import { creditsForMagnific, economyImageCharge, magnificAudioCost, magnificImageCost, magnificLipSyncCost, magnificVideoCost } from './aiPricing.ts';
 import { getMediaMode } from './chatActions.ts';
 import { FAST_MODEL, recordAIUsage, hasAICredits, chargeAICredits, callAINonStreaming, resolveTextKey } from '../ai-helpers.ts';
 import type { Router, Response } from 'express';
@@ -186,7 +186,7 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
                     if (postId) {
                       await dbQuery(`UPDATE blog_posts SET featured_image = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3`, [genRes.url, postId, userId]).catch(() => undefined);
                     }
-                    await chargeAICredits(userId, creditsForMagnific(magnificImageCost(magModel, imgOpts as any)), 'workflow_magnific_image', { model: magModel });
+                    await chargeAICredits(userId, (cfg.model ? creditsForMagnific(magnificImageCost(magModel, imgOpts as any)) : magModel === 'magnific-one' ? creditsForMagnific(magnificImageCost(magModel, imgOpts as any)) : economyImageCharge(creditsForMagnific(magnificImageCost(magModel, imgOpts as any)))), 'workflow_magnific_image', { model: magModel });
                     addLog(node.id, `Generated Magnific (${magModel}) image: ${genRes.url}`);
                   } else {
                     addLog(node.id, `Magnific image fallback to prompt notification (${genRes.error || 'no url'})`);

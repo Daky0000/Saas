@@ -971,7 +971,7 @@ function CustomInstructionsPanel({ onDone }: { onDone: () => void }) {
         <p className="text-[11px] font-semibold text-ink">Images &amp; video</p>
         <div className="mt-1 grid grid-cols-2 gap-1.5">
           {([
-            { id: 'economy' as const, title: 'Lowest cost', note: prices ? `~${prices.economy_image} credit${prices.economy_image === 1 ? '' : 's'} an image (free when available)` : 'Cheapest model for each job' },
+            { id: 'economy' as const, title: 'Lowest cost', note: prices ? `~${prices.economy_image} credits an image` : 'Good images at a lower price' },
             { id: 'quality' as const, title: 'Best quality', note: prices ? `~${prices.quality_image} credits an image (Magnific One)` : 'Magnific One images' },
           ]).map((o) => (
             <button key={o.id} type="button" onClick={() => { setMode(o.id); if (state === 'saved') setState('idle'); }}

@@ -213,3 +213,25 @@ export const OPENAI_TTS_USD_PER_1K_CHARS: Record<string, number> = {
 
 /** LLM writing one social post on the paid fallback, worst case (5k tokens in, 2k out on a Haiku-class model). */
 export const POST_COPY_WORST_USD = (5000 * 1 + 2000 * 5) / 1_000_000;
+
+// ── Lowest-cost images ───────────────────────────────────────────────────────
+//
+// An image made on the "Lowest cost" setting is charged half the Best-quality
+// image price (Magnific One 2k, standard tier), whatever model actually drew
+// it — even when it cost us nothing — and never less than that model's own
+// cost × 1.54.
+
+/** A Best-quality image: Magnific One 2k at its standard tier × 1.54. */
+export function qualityImageCredits(): number {
+  return creditsForMagnific(magnificOneCost({ quality: 'medium', resolution: '2k' }));
+}
+
+/** A Lowest-cost image: half the Best-quality price (rounded down), at least 1. */
+export function economyImageCredits(): number {
+  return Math.max(1, Math.floor(qualityImageCredits() / 2));
+}
+
+/** What a Lowest-cost image is charged when the model that made it cost `costCredits` at cost × 1.54. */
+export function economyImageCharge(costCredits = 0): number {
+  return Math.max(economyImageCredits(), costCredits);
+}
