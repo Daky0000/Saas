@@ -50,6 +50,7 @@ import { registerCRMActivitiesRoutes } from './server/crmActivitiesRoutes.ts';
 import { registerSalesRoutes } from './server/salesRoutes.ts';
 import { buildSalesEngine } from './server/sales/salesEngine.ts';
 import { registerCalendarRoutes } from './server/calendarRoutes.ts';
+import { registerUiStateRoutes } from './server/uiStateRoutes.ts';
 import { registerConnectorRegistryRoutes } from './server/connectorRegistryRoutes.ts';
 import { registerConnectorPreferencesRoutes } from './server/connectorPreferencesRoutes.ts';
 import { registerConnectorSyncRoutes, processDueConnectorSyncJobs } from './server/connectorSyncRoutes.ts';
@@ -986,6 +987,8 @@ app.use('/r', registerShortLinkRoutes({ pool: pool!, fireAutomationTrigger: auto
 // ─── End Campaign & Funnel Builder ────────────────────────────────────────────
 
 // ── AI Chat & Multi-Agent Routes ───────────────────────────────────────────
+// Per-user UI state that follows the user between devices (guided-tour progress).
+app.use('/api', registerUiStateRoutes({ requireAuth, dbQuery }));
 app.use('/api', registerAIChatRoutes({ requireAuth, getAIConfig, resolveActiveKey, callAINonStreaming, GEMINI_MODELS, pool, dbQuery, createNotification, checkTaskActions, getUserConnectedAccounts, AGENT_DEFS }));
 
 
