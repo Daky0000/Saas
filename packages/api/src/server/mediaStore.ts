@@ -108,7 +108,15 @@ export function setMediaStorageForTests(driver: AssetStorageDriver | null | unde
 // browsers can fetch. Content-addressed and immutable, like the bucket copy.
 // Files above DB_MAX_BYTES need object storage.
 
-export const DB_MAX_BYTES = 50 * 1024 * 1024;
+// Only images go to the database fallback (uploads, example designs, post
+// images), up to 10 MB each. Videos and audio keep their provider links until
+// object storage (R2) is configured — they are what would make the database
+// expensive.
+export const DB_MAX_BYTES = 10 * 1024 * 1024;
+/** Database copies no longer needed are removed this long after their post is published (or after creation, if unused). */
+export const DB_RETENTION_DAYS = 30;
+/** Set when the database may still hold files (checked by the route while R2 takes over). */
+let blobsMayRemain = true;
 let dbReady: Promise<void> | null = null;
 function ensureBlobTable(): Promise<void> {
   dbReady ??= dbQuery(`
@@ -198,8 +206,10 @@ export async function storeMediaBytes(buffer: Buffer, declaredMime: string, tena
     const existing = await driver.head(key).catch(() => null);
     if (!existing) await driver.put(key, buffer, MIME_BY_EXT[ext], { sha256, tenantId });
   } else {
+    if (!MIME_BY_EXT[ext].startsWith('image/')) throw new Error('Videos and audio need object storage (R2)');
     if (buffer.length > DB_MAX_BYTES) throw new Error(`Files over ${Math.round(DB_MAX_BYTES / 1024 / 1024)} MB need object storage`);
     await dbPut(file, buffer, MIME_BY_EXT[ext], tenantId);
+    blobsMayRemain = true;
   }
   return `${publicBase()}${ROUTE_PREFIX}${file}`;
 }
@@ -276,6 +286,17 @@ export function registerMediaStoreRoutes(): Router {
         return res.status(500).end();
       }
     }
+    // R2 is configured but this file may not have moved out of the database yet: serve it from there.
+    if (blobsMayRemain && dbAvailable()) {
+      const blob = await dbGet(file).catch(() => null);
+      if (blob) {
+        res.setHeader('Content-Type', blob.mime);
+        res.setHeader('Content-Length', String(blob.bytes.length));
+        res.setHeader('Cache-Control', 'public, max-age=3000');
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        return res.end(blob.bytes);
+      }
+    }
     // Presigned for an hour; the redirect itself may be cached a little less.
     // Embeddable from customers' sites (WordPress, newsletters), unlike helmet's default.
     res.setHeader('Cache-Control', 'public, max-age=3000');
@@ -283,4 +304,86 @@ export function registerMediaStoreRoutes(): Router {
     return res.redirect(302, driver.deliveryUrl(`${KEY_PREFIX}${file}`, 3600));
   });
   return router;
+}
+
+// ── Keeping the database small ───────────────────────────────────────────────
+//
+// Runs every 30 minutes:
+// 1. With R2 configured: moves files out of the database into R2 (same
+//    address, so nothing breaks), then removes them from the database.
+// 2. Without R2: removes database copies nothing needs any more — older than
+//    DB_RETENTION_DAYS and not used by an unpublished post, a post published in
+//    the last DB_RETENTION_DAYS, an example design, a saved item or a design
+//    system. Those stay as long as they are used.
+
+type Q = (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;
+
+/** Where a stored file is still needed (each check skipped when its table does not exist yet). */
+const REFERENCE_CHECKS = [
+  `SELECT 1 FROM blog_posts WHERE (featured_image LIKE $1 OR media_assets::text LIKE $1 OR COALESCE(video_url, '') LIKE $1 OR content LIKE $1)
+     AND (status <> 'published' OR published_at IS NULL OR published_at > NOW() - make_interval(days => $2)) LIMIT 1`,
+  `SELECT 1 FROM user_style_examples WHERE url LIKE $1 LIMIT 1`,
+  `SELECT 1 FROM user_library_assets WHERE images::text LIKE $1 LIMIT 1`,
+  `SELECT 1 FROM user_design_systems WHERE design::text LIKE $1 LIMIT 1`,
+];
+
+async function stillNeeded(query: Q, file: string): Promise<boolean> {
+  for (const sql of REFERENCE_CHECKS) {
+    try {
+      const { rows } = await query(sql, sql.includes('$2') ? [`%${file}%`, DB_RETENTION_DAYS] : [`%${file}%`]);
+      if (rows.length) return true;
+    } catch (err: any) {
+      // A table that does not exist yet holds no references; anything else: keep the file to be safe.
+      if (!/does not exist|42P01/.test(String(err?.message || err?.code || ''))) return true;
+    }
+  }
+  return false;
+}
+
+export interface MaintenanceResult { moved: number; removed: number; remaining: boolean }
+
+/** One maintenance pass. Never throws. `query`/`driver` are injectable for tests. */
+export async function runMediaMaintenance(opts: { query?: Q; driver?: AssetStorageDriver | null; batch?: number } = {}): Promise<MaintenanceResult> {
+  const query: Q = opts.query ?? ((sql, p) => dbQuery(sql, (p ?? []) as any[]));
+  const driver = opts.driver === undefined ? getMediaStorage() : opts.driver;
+  const batch = opts.batch ?? 200;
+  const out: MaintenanceResult = { moved: 0, removed: 0, remaining: false };
+  if (!opts.query && !hasDatabase()) return out;
+  try {
+    if (!opts.query) await ensureBlobTable();
+    if (driver) {
+      // 1. Move to R2, a few at a time (the bytes are read per batch, not all at once).
+      for (let done = 0; done < batch;) {
+        const { rows } = await query(`SELECT file, mime, bytes, tenant_id FROM media_blobs ORDER BY created_at LIMIT 10`);
+        if (!rows.length) break;
+        for (const r of rows) {
+          const sha256 = String(r.file).split('.')[0];
+          const key = `${KEY_PREFIX}${r.file}`;
+          const exists = await driver.head(key).catch(() => null);
+          if (!exists) await driver.put(key, Buffer.from(r.bytes), String(r.mime), { sha256, tenantId: String(r.tenant_id || 'shared') });
+          await query(`DELETE FROM media_blobs WHERE file=$1`, [r.file]);
+          out.moved++;
+          done++;
+        }
+      }
+    } else {
+      // 2. Remove copies nothing needs any more.
+      const { rows } = await query(
+        `SELECT file FROM media_blobs WHERE created_at < NOW() - make_interval(days => $1) ORDER BY created_at LIMIT $2`,
+        [DB_RETENTION_DAYS, batch],
+      );
+      for (const r of rows) {
+        if (await stillNeeded(query, String(r.file))) continue;
+        await query(`DELETE FROM media_blobs WHERE file=$1`, [r.file]);
+        out.removed++;
+      }
+    }
+    const left = await query(`SELECT EXISTS (SELECT 1 FROM media_blobs) AS any`);
+    out.remaining = Boolean(left.rows[0]?.any);
+    if (!opts.query) blobsMayRemain = out.remaining;
+    if (out.moved || out.removed) logger.info(out, 'media_maintenance');
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : err }, 'media_maintenance_failed');
+  }
+  return out;
 }

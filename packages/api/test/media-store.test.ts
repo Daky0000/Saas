@@ -138,3 +138,88 @@ test('no object storage: media is kept in the database and served from the same 
     store.setMediaStorageForTests(undefined as any);
   }
 });
+
+test('database fallback keeps images only: videos keep their provider link until R2 is set up', async () => {
+  store.setMediaStorageForTests(null as any);
+  const blobs = new Map<string, { bytes: Buffer; mime: string }>();
+  store.setMediaBlobBackendForTests({ available: () => true, put: async (f, b, m) => { blobs.set(f, { bytes: b, mime: m }); }, get: async (f) => blobs.get(f) ?? null });
+  try {
+    const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypmp42'), Buffer.alloc(64)]);
+    await assert.rejects(() => store.storeMediaBytes(mp4, 'video/mp4'), /need object storage/);
+    assert.equal(blobs.size, 0);
+  } finally {
+    store.setMediaBlobBackendForTests(null);
+    store.setMediaStorageForTests(undefined as any);
+  }
+});
+
+/** A fake media_blobs table + the reference tables the clean-up checks. */
+function fakeBlobDb(init: Array<{ file: string; ageDays: number }>, refs: { posts?: Array<{ text: string; status: string; publishedDaysAgo?: number }>; examples?: string[]; missingTables?: string[] } = {}) {
+  const blobs = init.map((b) => ({ file: b.file, mime: 'image/jpeg', bytes: Buffer.from(b.file), tenant_id: 'u', ageDays: b.ageDays }));
+  const query = async (sql: string, p: any[] = []) => {
+    const s = sql.replace(/\s+/g, ' ').trim();
+    const missing = (refs.missingTables ?? []).find((t) => s.includes(`FROM ${t}`));
+    if (missing) throw new Error(`relation "${missing}" does not exist`);
+    if (s.startsWith('SELECT file, mime, bytes, tenant_id FROM media_blobs')) return { rows: blobs.slice(0, 10) };
+    if (s.startsWith('DELETE FROM media_blobs WHERE file=$1')) { const i = blobs.findIndex((b) => b.file === p[0]); if (i >= 0) blobs.splice(i, 1); return { rows: [] }; }
+    if (s.startsWith('SELECT EXISTS (SELECT 1 FROM media_blobs)')) return { rows: [{ any: blobs.length > 0 }] };
+    if (s.startsWith('SELECT file FROM media_blobs WHERE created_at')) return { rows: blobs.filter((b) => b.ageDays > p[0]).slice(0, p[1]) };
+    const needle = String(p[0] ?? '').replace(/%/g, '');
+    if (s.startsWith('SELECT 1 FROM blog_posts')) return { rows: (refs.posts ?? []).filter((x) => x.text.includes(needle) && (x.status !== 'published' || (x.publishedDaysAgo ?? 0) < p[1])) };
+    if (s.startsWith('SELECT 1 FROM user_style_examples')) return { rows: (refs.examples ?? []).filter((u) => u.includes(needle)) };
+    if (s.startsWith('SELECT 1 FROM user_library_assets') || s.startsWith('SELECT 1 FROM user_design_systems')) return { rows: [] };
+    throw new Error(`unexpected SQL ${s.slice(0, 60)}`);
+  };
+  return { query, blobs };
+}
+
+test('clean-up without R2: copies nothing needs any more are removed after 30 days; anything still used stays', async () => {
+  const f = (n: string) => `${n.repeat(64).slice(0, 64)}.jpg`;
+  const db = fakeBlobDb(
+    [{ file: f('a'), ageDays: 40 }, { file: f('b'), ageDays: 40 }, { file: f('c'), ageDays: 40 }, { file: f('d'), ageDays: 40 }, { file: f('e'), ageDays: 5 }, { file: f('f'), ageDays: 40 }],
+    {
+      posts: [
+        { text: `https://app/media/r2/${f('b')}`, status: 'scheduled' },                       // unpublished post: keep
+        { text: `https://app/media/r2/${f('c')}`, status: 'published', publishedDaysAgo: 10 }, // published 10 days ago: keep
+        { text: `https://app/media/r2/${f('d')}`, status: 'published', publishedDaysAgo: 60 }, // published long ago: remove
+      ],
+      examples: [`https://app/media/r2/${f('f')}`],                                             // example design: keep
+      missingTables: ['user_library_assets'],                                                   // not created yet: no references
+    },
+  );
+  const r = await store.runMediaMaintenance({ query: db.query, driver: null });
+  assert.equal(r.removed, 2, 'the unused one and the long-published one');
+  assert.deepEqual(db.blobs.map((b) => b.file[0]).sort(), ['b', 'c', 'e', 'f']);
+  assert.equal(r.remaining, true);
+});
+
+test('R2 configured: every database file moves to R2 at the same address, then leaves the database', async () => {
+  const driver = createMemoryStorageDriver();
+  const f = (n: string) => `${n.repeat(64).slice(0, 64)}.jpg`;
+  const db = fakeBlobDb([{ file: f('1'), ageDays: 1 }, { file: f('2'), ageDays: 400 }]);
+  const r = await store.runMediaMaintenance({ query: db.query, driver });
+  assert.equal(r.moved, 2);
+  assert.equal(db.blobs.length, 0);
+  assert.equal(r.remaining, false);
+  assert.ok(await driver.head(`media/${f('1')}`));
+  assert.equal((await driver.get(`media/${f('2')}`))!.toString(), f('2'));
+});
+
+test('R2 just configured: a file not moved yet is still served from the database', async () => {
+  const driver = createMemoryStorageDriver();
+  store.setMediaStorageForTests(driver as any);
+  const file = `${'9'.repeat(64)}.jpg`;
+  store.setMediaBlobBackendForTests({ available: () => true, put: async () => undefined, get: async (f) => (f === file ? { bytes: Buffer.from('jpegbytes'), mime: 'image/jpeg' } : null) });
+  try {
+    const app = express();
+    app.use(store.registerMediaStoreRoutes());
+    const res = await request(app).get(`/media/r2/${file}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers['content-type'], 'image/jpeg');
+    const other = await request(app).get(`/media/r2/${'8'.repeat(64)}.jpg`);
+    assert.equal(other.status, 302, 'files already in R2 redirect as before');
+  } finally {
+    store.setMediaBlobBackendForTests(null);
+    store.setMediaStorageForTests(undefined as any);
+  }
+});

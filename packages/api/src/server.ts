@@ -116,7 +116,7 @@ import { registerLinkedInRoutes } from './server/linkedinRoutes.ts';
 import { registerSocialConnectRoutes, type SocialConnectDeps } from './server/socialConnectRoutes.ts';
 import { registerSocialRoutes } from './server/socialRoutes.ts';
 import { buildMediaModule } from './server/mediaRoutes.ts';
-import { registerMediaStoreRoutes } from './server/mediaStore.ts';
+import { registerMediaStoreRoutes, runMediaMaintenance } from './server/mediaStore.ts';
 import { registerNvidiaRoutes } from './server/nvidiaRoutes.ts';
 import { registerAIOpsRoutes } from './server/aiOpsRoutes.ts';
 import { runAIMonitor } from './server/aiTrace.ts';
@@ -1137,6 +1137,10 @@ if (config.nodeEnv !== 'test') {
     // Run autonomous multi-agent schedules & handoffs every 10 minutes
     void runDueAgentSchedules(pool);
     setInterval(() => void runDueAgentSchedules(pool), 10 * 60 * 1000);
+    // Keep media out of the database: move files to R2 once it is configured,
+    // and remove database copies nothing needs any more (every 30 minutes).
+    setTimeout(() => void runMediaMaintenance(), 3 * 60 * 1000);
+    setInterval(() => void runMediaMaintenance(), 30 * 60 * 1000);
     // Publish due scheduled posts every 2 minutes
     const schedulerDeps = { queueSocialAutomationForPublishedPost: distModule.queueSocialAutomationForPublishedPost, fireWorkflowTriggers };
     void publishDuePosts(schedulerDeps);
