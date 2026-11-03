@@ -8,6 +8,7 @@ import { logger } from '../logger.ts';
 import { ensureCreditAccount, resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits, recordFastPathSavings, chargeAICredits, resolveTextKey, isPaidKey, computeAICostUsd, classifyAIProviderError, AIUnavailableError, aiErrorFor, aiErrorDetail } from '../ai-helpers.ts';
 import { DEFAULT_TOOL_RULES, ToolGuard, UNTRUSTED_RULE, canaryLine, capToolResult, checkOutput, fence, mergeScans, scanForInjection } from './aiGuard.ts';
 import { chatTurnKey, makeToolMemo } from './aiCheckpoints.ts';
+import { TurnRegistry, cleanTurnId } from './chatTurns.ts';
 import { classifyChatTurn, fitHistory, routePaidModel, routingMode } from './aiRouting.ts';
 import { startSpan } from './aiTrace.ts';
 import { nvidiaAgentLoop, nvidiaChat, nvidiaImage } from './nvidiaModels.ts';
@@ -1431,8 +1432,15 @@ export function registerAIChatRoutes({
     }
   }
 
+  // ── Chat replies run on the server, not in the browser tab ─────────────────
+  // Each reply is a job (see chatTurns.ts): the browser follows it, and can
+  // leave and come back — the reply keeps going and nothing is asked twice.
+  const turns = new TurnRegistry(q);
+
   // ── POST /api/ai/chat ─────────────────────────────────────────────────────
-  router.post('/ai/chat', aiChatLimiter, async (req: Request, res: Response) => {
+  // The reply itself. It writes to `res`, which is the real response for an
+  // older client, or a TurnSink when it runs as a job.
+  const chatTurnHandler = async (req: Request, res: Response) => {
     let role: string | undefined;
     try {
       const auth = requireAuth(req, res);
@@ -1868,6 +1876,49 @@ export function registerAIChatRoutes({
         res.write(`data: ${JSON.stringify({ type: 'error', error: shown, retryable: true })}\n\n`);
         res.end();
       }
+    }
+  };
+
+  router.post('/ai/chat', aiChatLimiter, async (req: Request, res: Response) => {
+    const turnId = cleanTurnId((req.body as any)?.turn_id);
+    // An older page without turn ids: the reply streams on this request, as before.
+    if (!turnId) return chatTurnHandler(req, res);
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const after = Number.isInteger((req.body as any)?.after) ? Number((req.body as any).after) : 0;
+    try {
+      // A turn that already exists (a retry, a second tab, a reconnect) is followed, never started again.
+      if (turns.live(turnId, auth.userId) || await turns.saved(turnId, auth.userId).catch(() => null)) {
+        return await turns.follow(res, turnId, auth.userId, after);
+      }
+      // Answers that need an HTTP status come before the job starts.
+      const messages = (req.body as any)?.messages;
+      if (!Array.isArray(messages) || messages.length === 0) {
+        return res.status(400).json({ success: false, error: 'messages array is required' });
+      }
+      if (!(await hasAICredits(auth.userId))) {
+        return res.status(402).json({ success: false, error: OUT_OF_CREDITS_MSG });
+      }
+      turns.start(turnId, auth.userId, 'chat', (sink) => chatTurnHandler(req, sink as unknown as Response));
+      return await turns.follow(res, turnId, auth.userId, 0);
+    } catch (err) {
+      logger.error({ err }, 'chat_turn_start_failed');
+      if (!res.headersSent) return res.status(500).json({ success: false, error: 'The reply could not be started — please try again.' });
+    }
+  });
+
+  /** Picks a reply up again: the events after `after`, then live ones until it ends. */
+  router.get('/ai/chat/turns/:id/events', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const turnId = cleanTurnId(req.params.id);
+    if (!turnId) return res.status(400).json({ success: false, error: 'Invalid reply id' });
+    const after = Math.max(0, Number.parseInt(String(req.query.after ?? '0'), 10) || 0);
+    try {
+      await turns.follow(res, turnId, auth.userId, after);
+    } catch (err) {
+      logger.warn({ err }, 'chat_turn_follow_failed');
+      if (!res.headersSent) res.status(500).json({ success: false, error: 'Could not reconnect — please try again.' });
     }
   });
 
@@ -2795,7 +2846,8 @@ Rules:
   });
 
   // ── POST /api/ai/execute-plan ──────────────────────────────────────────────
-  router.post('/ai/execute-plan', aiChatLimiter, async (req: Request, res: Response) => {
+  // The team's analysis and summary, as a job like a chat reply (see chatTurns.ts).
+  const planTurnHandler = async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res);
       if (!auth) return;
@@ -2962,7 +3014,30 @@ Rules:
       res.end();
     } catch (e: any) {
       if (!res.headersSent) return res.status(500).json({ success: false, error: e?.message || 'Execute plan failed' });
+      res.write(`data: ${JSON.stringify({ type: 'error', error: 'The team could not finish — please try again.', retryable: true })}\n\n`);
       res.end();
+    }
+  };
+
+  router.post('/ai/execute-plan', aiChatLimiter, async (req: Request, res: Response) => {
+    const turnId = cleanTurnId((req.body as any)?.turn_id);
+    if (!turnId) return planTurnHandler(req, res);
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const after = Number.isInteger((req.body as any)?.after) ? Number((req.body as any).after) : 0;
+    try {
+      if (turns.live(turnId, auth.userId) || await turns.saved(turnId, auth.userId).catch(() => null)) {
+        return await turns.follow(res, turnId, auth.userId, after);
+      }
+      const { messages, plan } = (req.body ?? {}) as any;
+      if (!Array.isArray(messages) || !plan?.agents) return res.status(400).json({ success: false, error: 'messages and plan required' });
+      if (!resolveTextKey(await getAIConfig())) return res.status(503).json({ success: false, error: 'AI not configured' });
+      if (!(await hasAICredits(auth.userId))) return res.status(402).json({ success: false, error: OUT_OF_CREDITS_MSG });
+      turns.start(turnId, auth.userId, 'plan', (sink) => planTurnHandler(req, sink as unknown as Response));
+      return await turns.follow(res, turnId, auth.userId, 0);
+    } catch (err) {
+      logger.error({ err }, 'plan_turn_start_failed');
+      if (!res.headersSent) return res.status(500).json({ success: false, error: 'The team could not be started — please try again.' });
     }
   });
 
