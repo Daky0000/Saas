@@ -9,6 +9,7 @@ import { config } from '../config.ts';
 import { fetchMediaBytes } from '../ssrf-guard.ts';
 import { getBackendPublicUrl } from '../platform-helpers.ts';
 import { resolveAssetStorage, type AssetStorageDriver } from './autopilot/assetStorage.ts';
+import { dbQuery, hasDatabase } from '../db.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Durable media for everything outside autopilot (content plans, Magnific
@@ -99,6 +100,63 @@ export function setMediaStorageForTests(driver: AssetStorageDriver | null | unde
   cached = driver === undefined ? null : { driver, description: 'test' };
 }
 
+// ── Database fallback ────────────────────────────────────────────────────────
+//
+// Without S3-compatible storage, media is kept in Postgres (media_blobs) and
+// served from the same public route, so uploads, generated images and videos
+// still get a stable https address that Magnific, social platforms and
+// browsers can fetch. Content-addressed and immutable, like the bucket copy.
+// Files above DB_MAX_BYTES need object storage.
+
+export const DB_MAX_BYTES = 50 * 1024 * 1024;
+let dbReady: Promise<void> | null = null;
+function ensureBlobTable(): Promise<void> {
+  dbReady ??= dbQuery(`
+    CREATE TABLE IF NOT EXISTS media_blobs (
+      file TEXT PRIMARY KEY,
+      mime TEXT NOT NULL,
+      bytes BYTEA NOT NULL,
+      size INTEGER NOT NULL,
+      tenant_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`).then(() => undefined).catch((err) => { dbReady = null; throw err; });
+  return dbReady;
+}
+
+/** The database fallback's storage (swappable in tests). */
+interface BlobBackend {
+  available(): boolean;
+  put(file: string, buffer: Buffer, mime: string, tenantId: string): Promise<void>;
+  get(file: string): Promise<{ bytes: Buffer; mime: string } | null>;
+}
+let blobBackend: BlobBackend = { available: () => hasDatabase(), put: (...a) => dbPutPg(...a), get: (f) => dbGetPg(f) };
+/** Test seam: an in-memory database fallback (null resets to Postgres). */
+export function setMediaBlobBackendForTests(b: BlobBackend | null): void {
+  blobBackend = b ?? { available: () => hasDatabase(), put: (...a) => dbPutPg(...a), get: (f) => dbGetPg(f) };
+}
+const dbPut = (file: string, buffer: Buffer, mime: string, tenantId: string) => blobBackend.put(file, buffer, mime, tenantId);
+const dbGet = (file: string) => blobBackend.get(file);
+const dbAvailable = () => blobBackend.available();
+
+/** True when media can be stored at all: object storage, or the database fallback. */
+export function mediaStorageAvailable(): boolean {
+  return Boolean(getMediaStorage()) || dbAvailable();
+}
+
+async function dbPutPg(file: string, buffer: Buffer, mime: string, tenantId: string): Promise<void> {
+  await ensureBlobTable();
+  await dbQuery(
+    `INSERT INTO media_blobs (file, mime, bytes, size, tenant_id) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (file) DO NOTHING`,
+    [file, mime, buffer, buffer.length, tenantId],
+  );
+}
+
+async function dbGetPg(file: string): Promise<{ bytes: Buffer; mime: string } | null> {
+  await ensureBlobTable();
+  const { rows } = await dbQuery<{ bytes: Buffer; mime: string }>(`SELECT bytes, mime FROM media_blobs WHERE file=$1`, [file]);
+  return rows[0] ? { bytes: Buffer.from(rows[0].bytes), mime: rows[0].mime } : null;
+}
+
 function publicBase(): string {
   return (getBackendPublicUrl() || config.appUrl).replace(/\/$/, '');
 }
@@ -123,7 +181,7 @@ export interface StoreOptions {
 /** Stores bytes and returns their stable URL. Throws when storage is missing or the write fails. */
 export async function storeMediaBytes(buffer: Buffer, declaredMime: string, tenantId = 'shared', opts: StoreOptions = {}): Promise<string> {
   const driver = getMediaStorage();
-  if (!driver) throw new Error('Object storage is not configured');
+  if (!driver && !dbAvailable()) throw new Error('Media storage is not configured');
   if (!buffer.length) throw new Error('Empty media');
   if (buffer.length > MAX_BYTES) throw new Error('Media exceeds the size limit');
   let mimeType = sniffMime(buffer, String(declaredMime || '').toLowerCase());
@@ -136,8 +194,13 @@ export async function storeMediaBytes(buffer: Buffer, declaredMime: string, tena
   const sha256 = createHash('sha256').update(buffer).digest('hex');
   const file = `${sha256}.${ext}`;
   const key = `${KEY_PREFIX}${file}`;
-  const existing = await driver.head(key).catch(() => null);
-  if (!existing) await driver.put(key, buffer, MIME_BY_EXT[ext], { sha256, tenantId });
+  if (driver) {
+    const existing = await driver.head(key).catch(() => null);
+    if (!existing) await driver.put(key, buffer, MIME_BY_EXT[ext], { sha256, tenantId });
+  } else {
+    if (buffer.length > DB_MAX_BYTES) throw new Error(`Files over ${Math.round(DB_MAX_BYTES / 1024 / 1024)} MB need object storage`);
+    await dbPut(file, buffer, MIME_BY_EXT[ext], tenantId);
+  }
   return `${publicBase()}${ROUTE_PREFIX}${file}`;
 }
 
@@ -148,7 +211,7 @@ export async function storeMediaBytes(buffer: Buffer, declaredMime: string, tena
  */
 export async function durableMediaUrl(url: string | null | undefined, tenantId = 'shared', opts: StoreOptions = {}): Promise<string> {
   const raw = String(url || '').trim();
-  if (!raw || !getMediaStorage()) return raw;
+  if (!raw || !mediaStorageAvailable()) return raw;
   if (isStoredMediaUrl(raw)) return opts.jpeg ? jpegStoredMediaUrl(raw, tenantId) : raw;
   if (!/^(https:\/\/|data:)/i.test(raw)) return raw;
   try {
@@ -164,9 +227,9 @@ export async function durableMediaUrl(url: string | null | undefined, tenantId =
 async function jpegStoredMediaUrl(url: string, tenantId: string): Promise<string> {
   const file = storedMediaFile(url);
   const driver = getMediaStorage();
-  if (!file || !driver || !file.endsWith('.png')) return url;
+  if (!file || !file.endsWith('.png') || (!driver && !dbAvailable())) return url;
   try {
-    const bytes = await driver.get(`${KEY_PREFIX}${file}`);
+    const bytes = driver ? await driver.get(`${KEY_PREFIX}${file}`) : (await dbGet(file))?.bytes ?? null;
     return bytes ? await storeMediaBytes(bytes, 'image/png', tenantId, { jpeg: true }) : url;
   } catch (err) {
     logger.warn({ err: err instanceof Error ? err.message : err }, 'media_store_jpeg_failed');
@@ -193,11 +256,26 @@ export function directMediaUrl(url: string, ttlSeconds = 24 * 60 * 60): string {
 /** GET /media/r2/<sha256>.<ext> → 302 to a presigned bucket URL. Public, like the posts that embed it. */
 export function registerMediaStoreRoutes(): Router {
   const router = express.Router();
-  router.get(`${ROUTE_PREFIX}:file`, (req: Request, res: Response) => {
+  router.get(`${ROUTE_PREFIX}:file`, async (req: Request, res: Response) => {
     const file = String(req.params.file || '');
     const driver = getMediaStorage();
     if (!FILE_RE.test(file)) return res.status(404).end();
-    if (!driver) return res.status(503).json({ error: 'Media storage is not configured' });
+    if (!driver) {
+      // Database fallback: the bytes themselves (content-addressed, so cacheable for a year).
+      if (!dbAvailable()) return res.status(503).json({ error: 'Media storage is not configured' });
+      try {
+        const blob = await dbGet(file);
+        if (!blob) return res.status(404).end();
+        res.setHeader('Content-Type', blob.mime);
+        res.setHeader('Content-Length', String(blob.bytes.length));
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        return res.end(blob.bytes);
+      } catch (err) {
+        logger.warn({ err: err instanceof Error ? err.message : err }, 'media_blob_read_failed');
+        return res.status(500).end();
+      }
+    }
     // Presigned for an hour; the redirect itself may be cached a little less.
     // Embeddable from customers' sites (WordPress, newsletters), unlike helmet's default.
     res.setHeader('Cache-Control', 'public, max-age=3000');

@@ -38,6 +38,10 @@ function fakeDb() {
     if (s.startsWith('SELECT summary, examples_key FROM user_style_profile')) return { rows: t.profile.filter((r) => r.user_id === p[0]) };
     if (s.startsWith('SELECT summary FROM user_style_profile')) return { rows: t.profile.filter((r) => r.user_id === p[0]) };
     if (s.startsWith('INSERT INTO user_style_profile')) { t.profile = t.profile.filter((r) => r.user_id !== p[0]); t.profile.push({ user_id: p[0], summary: p[1], examples_key: p[2] }); return { rows: [] }; }
+    // autopilot switch
+    if (s.startsWith('ALTER TABLE user_custom_instructions')) return { rows: [] };
+    if (s.startsWith('SELECT autopilot_style FROM user_custom_instructions')) return { rows: (t.settings ?? []).filter((r: any) => r.user_id === p[0]) };
+    if (s.startsWith('INSERT INTO user_custom_instructions (user_id, autopilot_style')) { t.settings = [...(t.settings ?? []).filter((r: any) => r.user_id !== p[0]), { user_id: p[0], autopilot_style: p[1] }]; return { rows: [] }; }
     // design system
     if (s.startsWith('SELECT design, design_hash')) return { rows: t.design.filter((r) => r.user_id === p[0]) };
     if (s.startsWith('INSERT INTO user_design_systems')) { const prev = t.design.find((r) => r.user_id === p[0]); const row = { ...(prev ?? {}), user_id: p[0], website_url: p[1], design: JSON.parse(p[2]), design_hash: p[3] }; t.design = t.design.filter((r) => r.user_id !== p[0]); t.design.push(row); return { rows: [] }; }
@@ -169,4 +173,30 @@ test('nothing taught on Lowest cost: the normal cheap chain is used', async () =
   const mag = fakeMagnific();
   assert.equal(await it.generateTastefulImage({ query: db.query, userId: 'u', mcp: mag.mcp, prompt: 'x', aspectRatio: '1:1', mode: 'economy' }), null);
   assert.equal(mag.count('images_generate'), 0);
+});
+
+test('Autopilot: uses the taught style by default; the user can switch it off', async () => {
+  const db = fakeDb();
+  assert.equal(await it.autopilotUsesStyle(db.query, 'u'), true);
+  await it.setAutopilotUsesStyle(db.query, 'u', false);
+  assert.equal(await it.autopilotUsesStyle(db.query, 'u'), false);
+  await it.setAutopilotUsesStyle(db.query, 'u', true);
+  assert.equal(await it.autopilotUsesStyle(db.query, 'u'), true);
+  assert.equal(await it.autopilotUsesStyle(db.query, null), false);
+});
+
+test('Autopilot: an image gets the learned style and bans, example designs and the saved item it mentions', () => {
+  const taste: any = {
+    styleSummary: 'Bright pastel flat lays.',
+    examples: [1, 2, 3, 4].map((i) => ({ url: `https://img.test/ex${i}.jpg` })),
+    rules: [{ avoid_term: 'dark background', directive: 'Never dark backgrounds' }],
+    assets: [{ name: 'coffee_bag', type: 'product', description: 'kraft bag', images: ['https://img.test/bag1.jpg', 'https://img.test/bag2.jpg', 'https://img.test/bag3.jpg'] },
+      { name: 'mia', type: 'character', description: '', images: ['https://img.test/mia.jpg'] }],
+  };
+  const r = it.autopilotTasteInputs(taste, 'Launch post: our new coffee bag on a shelf');
+  assert.match(r.promptAddon, /Bright pastel flat lays/);
+  assert.match(r.promptAddon, /Avoid: dark background/);
+  assert.match(r.promptAddon, /coffee bag: kraft bag/);
+  assert.deepEqual(r.referenceUrls, ['https://img.test/bag1.jpg', 'https://img.test/bag2.jpg', 'https://img.test/ex1.jpg', 'https://img.test/ex2.jpg', 'https://img.test/ex3.jpg'],
+    'saved item photos first (2), then 3 examples; items not mentioned are left out');
 });

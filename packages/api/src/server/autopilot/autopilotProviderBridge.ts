@@ -6,6 +6,9 @@ import { logger } from '../../logger.ts';
 import type { VisualProviderAdapterInput } from './workflowOrchestrator.ts';
 import { openaiImageSizeForAspect } from '../openaiRoutes.ts';
 import { getMagnificApiKey, magnificGenerateImage, magnificGenerateVideo } from '../magnificRoutes.ts';
+import { generateTastefulImage } from '../imageTaste.ts';
+import { callMagnificMcpTool } from '../mcpRoutes.ts';
+import { dbQuery } from '../../db.ts';
 import { resolveSelectableModel, ModelUnavailableError, listSelectableModels } from './creativeBriefAndRouter.ts';
 import type { VisualGenerationResult, ProviderUsage } from './assetPipeline.ts';
 
@@ -268,6 +271,19 @@ export function buildAutopilotVisualAdapter(deps: ProviderBridgeDeps) {
       const apiKey = await getMagnificApiKey((deps.pool as any) || null).catch(() => '');
       if (!apiKey) return failure('PROVIDER_NOT_CONFIGURED', 'Magnific is not configured.', 'not_submitted', false);
       const isVideo = entry.adapter === 'magnific_video_task';
+      // Magnific One with the user's Brand Kit, example styles and saved items (their taught style).
+      if (!isVideo && entry.model === 'magnific-one' && input.useTaste && input.userId) {
+        const mcp = (tool: string, args: Record<string, unknown>) => callMagnificMcpTool((deps.pool as any) || null, tool, args, (val: unknown) => {
+          const dec = decryptPlatformConfig(val as any);
+          return typeof dec === 'string' ? dec : (dec as any)?.value ?? '';
+        });
+        const taught = await generateTastefulImage({
+          query: (sql, p) => dbQuery(sql, p as any[]), userId: input.userId, mcp, prompt: input.prompt, aspectRatio: input.aspectRatio || '1:1', mode: 'quality', channel: 'social',
+        }).catch(() => null);
+        if (taught) {
+          return { ok: true, provider: 'magnific', model: entry.model, mediaType: 'image', sourceUrl: taught.url, mimeType: 'application/octet-stream' };
+        }
+      }
       let out: { url: string | null; taskId: string | null; error: string | null };
       try {
         out = isVideo

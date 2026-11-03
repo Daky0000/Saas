@@ -101,3 +101,40 @@ test('media store route: redirects a stored file to the bucket, refuses anything
     assert.equal(store.directMediaUrl('https://elsewhere.example.com/x.jpg'), 'https://elsewhere.example.com/x.jpg');
   } finally { store.setMediaStorageForTests(undefined); }
 });
+
+test('no object storage: media is kept in the database and served from the same public address', async () => {
+  store.setMediaStorageForTests(null as any);
+  const blobs = new Map<string, { bytes: Buffer; mime: string }>();
+  store.setMediaBlobBackendForTests({
+    available: () => true,
+    put: async (file, bytes, mime) => { blobs.set(file, { bytes, mime }); },
+    get: async (file) => blobs.get(file) ?? null,
+  });
+  try {
+    // getMediaStorage() is null (no S3) but uploads still work.
+    assert.equal(store.getMediaStorage(), null);
+    assert.equal(store.mediaStorageAvailable(), true);
+    const jpeg = Buffer.from(jpegJs.encode({ data: Buffer.alloc(4 * 4 * 4, 200), width: 4, height: 4 }, 90).data);
+    const url = await store.storeMediaBytes(jpeg, 'image/jpeg', 'u1');
+    assert.match(url, /\/media\/r2\/[a-f0-9]{64}\.jpg$/);
+    assert.equal(blobs.size, 1);
+    // Same bytes: stored once.
+    assert.equal(await store.storeMediaBytes(jpeg, 'image/jpeg', 'u1'), url);
+    assert.equal(blobs.size, 1);
+    // Served publicly with its type, cacheable.
+    const app = express();
+    app.use(store.registerMediaStoreRoutes());
+    const res = await request(app).get(url.slice(url.indexOf('/media/r2/')));
+    assert.equal(res.status, 200);
+    assert.equal(res.headers['content-type'], 'image/jpeg');
+    assert.match(String(res.headers['cache-control']), /immutable/);
+    assert.equal(Buffer.compare(res.body as Buffer, jpeg), 0);
+    // Unknown files are 404, not an error.
+    assert.equal((await request(app).get(`/media/r2/${'0'.repeat(64)}.jpg`)).status, 404);
+    // Too big for the database fallback: a clear error.
+    await assert.rejects(() => store.storeMediaBytes(Buffer.concat([jpeg, Buffer.alloc(store.DB_MAX_BYTES)]), 'image/jpeg'), /need object storage/);
+  } finally {
+    store.setMediaBlobBackendForTests(null);
+    store.setMediaStorageForTests(undefined as any);
+  }
+});

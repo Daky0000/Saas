@@ -16,7 +16,7 @@ import { AIUnavailableError, aiErrorDetail, getAIConfig, resolveTextKey, callAIN
 import { buildSharedAgentContext } from './agentSharedContext.ts';
 import { magnificOneGenerate, magnificGenerateImage } from './magnificRoutes.ts';
 import { DEFAULT_OPENAI_IMAGE_MODEL, OPENAI_IMAGE_MODELS } from './openaiRoutes.ts';
-import { durableMediaUrl, getMediaStorage, storeMediaBytes } from './mediaStore.ts';
+import { durableMediaUrl, getMediaStorage, mediaStorageAvailable, storeMediaBytes } from './mediaStore.ts';
 import { nvidiaImage, nvidiaReady } from './nvidiaModels.ts';
 import { openCheckpoint } from './aiCheckpoints.ts';
 import { fence } from './aiGuard.ts';
@@ -119,7 +119,7 @@ async function getPlatformKey(platform: string, field = 'api_key'): Promise<stri
 
 async function storeGeneratedImage(base64Data: string, mimeType: string): Promise<string> {
   // Object storage first (R2 in production): a stable, platform-fetchable URL.
-  if (getMediaStorage()) {
+  if (mediaStorageAvailable()) {
     try {
       return await storeMediaBytes(Buffer.from(base64Data, 'base64'), mimeType, 'content-plan', { jpeg: true });
     } catch (e) { logger.warn({ e: e instanceof Error ? e.message : e }, 'content_plan_storage_upload_failed'); }

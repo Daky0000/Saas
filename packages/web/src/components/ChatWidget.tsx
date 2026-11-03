@@ -1049,6 +1049,8 @@ type TasteView = {
   rules: Array<{ id: string; directive: string; avoid_term: string; source: string; enforced_by_magnific: boolean }>;
   assets: Array<{ id: string; type: 'product' | 'character' | 'locations'; name: string; description: string; images: string[]; saved_in_magnific: boolean }>;
   brand_kit: boolean;
+  autopilot_style: boolean;
+  uploads: boolean;
   limits: { examples: number; rules: number; assets: number };
 };
 
@@ -1134,7 +1136,7 @@ function StylePanel({ onDone }: { onDone: () => void }) {
         ) : <p className={`${small} text-faint`}>No examples yet. Add 3–6 designs (yours or ones you admire) for the best results.</p>}
         <div className="flex flex-wrap items-center gap-1.5">
           <input ref={exampleInput} type="file" accept="image/png,image/jpeg,image/webp" multiple hidden onChange={(e) => { void addExamples(e.target.files); e.target.value = ''; }} />
-          <button type="button" disabled={busy !== null || examplesFull} onClick={() => exampleInput.current?.click()}
+          <button type="button" disabled={busy !== null || examplesFull || taste?.uploads === false} title={taste?.uploads === false ? 'Uploads are unavailable right now — paste an image link instead' : undefined} onClick={() => exampleInput.current?.click()}
             className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-50">
             {busy === 'examples' ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />} Add images
           </button>
@@ -1227,6 +1229,16 @@ function StylePanel({ onDone }: { onDone: () => void }) {
         )}
       </section>
 
+      {taste && (
+        <label className="flex cursor-pointer items-start gap-2 border-t border-line pt-2.5">
+          <input type="checkbox" checked={taste.autopilot_style} disabled={busy !== null}
+            onChange={(e) => void run('settings', () => call('PUT', '/settings', { autopilot_style: e.target.checked }))} className="mt-0.5" />
+          <span className={small}>
+            <span className="block font-semibold text-ink">Use my style in Autopilot too</span>
+            <span className="text-muted">Autopilot's images follow these examples, rules and saved items. Approving or rejecting its images keeps teaching it.</span>
+          </span>
+        </label>
+      )}
       {error && <p className="rounded-lg bg-red-50 px-2 py-1 text-[11px] text-red-600">{error}</p>}
       {taste && (taste.examples.length > 0 || taste.rules.length > 0 || taste.assets.length > 0) && (
         <p className={`${small} text-faint`}>{taste.brand_kit ? '✓ Saved in Magnific with your Brand Kit — used on every image.' : 'Saved — sent to Magnific with your next image, then reused.'}</p>

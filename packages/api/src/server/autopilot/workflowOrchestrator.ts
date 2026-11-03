@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { getMediaMode } from '../chatActions.ts';
+import { autopilotTasteInputs, autopilotUsesStyle, loadTaste, type Taste } from '../imageTaste.ts';
 import { dbQuery } from '../../db.ts';
 import type { AutopilotRepository } from './repository.ts';
 import {
@@ -65,6 +66,10 @@ export interface VisualProviderAdapterInput {
   magnificFlowId?: string;
   outputFormat?: 'jpeg' | 'png' | 'webp';
   quality?: 'low' | 'medium' | 'high';
+  /** Whose taught image style applies (Brand Kit, example designs, rules, saved items). */
+  userId?: string;
+  /** False when the user switched "use my image style in Autopilot" off. */
+  useTaste?: boolean;
 }
 
 export type VisualProviderAdapter = (input: VisualProviderAdapterInput) => Promise<VisualGenerationResult>;
@@ -307,6 +312,12 @@ export async function executeAutopilotWorkflow(params: ExecuteWorkflowParams): P
     });
     await repo.saveCreativeBrief(brief);
   }
+
+  // The taught image style of the item's owner (on unless they switched it off for Autopilot).
+  const tasteUserId: string | null = (item as any).owner_user_id || params.actorUserId || null;
+  const taste: Taste | null = tasteUserId && await autopilotUsesStyle((sql, p) => dbQuery(sql, p as any[]), tasteUserId)
+    ? await loadTaste((sql, p) => dbQuery(sql, p as any[]), tasteUserId).catch(() => null)
+    : null;
 
   // One idempotency key per intentional attempt. Re-sending the same attempt
   // key returns the earlier run instead of generating (and paying) again; a
@@ -551,15 +562,23 @@ export async function executeAutopilotWorkflow(params: ExecuteWorkflowParams): P
     }
     await accounting.markUnitSubmitted(tenantId, idempotencyKey, index);
 
+    // The user's taught image style: learned direction + bans in the prompt,
+    // example designs and saved products/people/places as references.
+    const taught = taste ? autopilotTasteInputs(taste, `${item?.title ?? ""} ${item?.hook ?? ""} ${item?.caption ?? ""} ${prompt}`) : null;
+    const tastedPrompt = taught?.promptAddon ? `${prompt}\n\n${taught.promptAddon}` : prompt;
+    const baseRefs = referencedAssets.map((a) => a.url).filter((u) => /^https:\/\//.test(u));
     let result: VisualGenerationResult | null = null;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       result = await params.visualAdapter!({
         provider: primary.provider,
         model: primary.model,
         modelId: primary.id,
-        prompt,
+        prompt: tastedPrompt,
         aspectRatio,
-        referenceUrls: referencedAssets.map((a) => a.url).filter((u) => /^https:\/\//.test(u)),
+        // The user's own attached media first; then what they taught.
+        referenceUrls: [...new Set([...baseRefs, ...(taught?.referenceUrls ?? [])])],
+        userId: tasteUserId ?? undefined,
+        useTaste: Boolean(taste),
         magnificSpaceId: params.magnificSpaceId,
         magnificFlowId: params.magnificFlowId,
         outputFormat: mediaType === 'image' ? outputFormat : undefined,

@@ -16,7 +16,7 @@ import { aiChatLimiter } from '../middleware/rateLimiter.ts';
 import { creditsForMagnific, economyImageCharge, magnificImageCost, magnificOneCost } from './aiPricing.ts';
 import { designSystemBlock, designPromptHint, generateWithBrandKit, getDesignSystem, captureDesignSystem, saveDesignSystem, magnificChannel, type DesignSystem } from './designSystem.ts';
 import { deletePreference, listPreferences, preferencesBlock, recordPreference } from './preferenceMemory.ts';
-import { addImageRule, addStyleExample, assetsIn, createLibraryAsset, generateTastefulImage, loadTaste, refreshStyleSummary, removeImageRule, removeLibraryAsset, removeStyleExample, syncTasteToMagnific, tasteBlock, tastePromptHint, type Taste } from './imageTaste.ts';
+import { addImageRule, addStyleExample, assetsIn, autopilotUsesStyle, setAutopilotUsesStyle, createLibraryAsset, generateTastefulImage, loadTaste, refreshStyleSummary, removeImageRule, removeLibraryAsset, removeStyleExample, syncTasteToMagnific, tasteBlock, tastePromptHint, type Taste } from './imageTaste.ts';
 import { clearCalendarCacheForUser } from '../link-metadata.ts';
 import { decryptPlatformConfig } from '../integration-helpers.ts';
 import { callMagnificMcpTool } from './mcpRoutes.ts';
@@ -32,7 +32,7 @@ import {
   MAGNIFIC_IMAGE_MODELS,
   MAGNIFIC_VIDEO_MODELS,
 } from './magnificRoutes.ts';
-import { durableMediaUrl, durableMediaUrls, getMediaStorage, storeMediaBytes } from './mediaStore.ts';
+import { durableMediaUrl, durableMediaUrls, getMediaStorage, mediaStorageAvailable, storeMediaBytes } from './mediaStore.ts';
 import {
   socialImageCredits, PLATFORM_LABEL, FORMAT_LABEL, socialCopyCredits, SOCIAL_IMAGE_MODEL, SOCIAL_IMAGE_OPTS, ECONOMY_IMAGE_MODEL, ECONOMY_IMAGE_FALLBACK, SOCIAL_VIDEO_MODEL_FROM_IMAGE, socialVideoCredits, socialVideoModel,
   aspectRatioFor, bestTimesGuide, isVideoFormat, validTimeZone, parsePiece, pieceSchema, publishText, slidePrompt, writingRules,
@@ -1705,13 +1705,15 @@ export function registerAIChatRoutes({
   };
 
   const tasteView = async (userId: string) => {
-    const [taste, ds] = await Promise.all([loadTaste(q, userId), getDesignSystem(q, userId)]);
+    const [taste, ds, autopilotStyle] = await Promise.all([loadTaste(q, userId), getDesignSystem(q, userId), autopilotUsesStyle(q, userId)]);
     return {
       summary: taste.styleSummary,
       examples: taste.examples.map((e) => ({ id: e.id, url: e.url, note: e.note, source: e.source, saved_in_magnific: Boolean(e.magnific_creation_id && e.in_kit) })),
       rules: taste.rules.map((r) => ({ id: r.id, directive: r.directive, avoid_term: r.avoid_term, source: r.source, enforced_by_magnific: r.synced })),
       assets: taste.assets.map((a) => ({ id: a.id, type: a.type, name: a.name, description: a.description, images: a.images, saved_in_magnific: Boolean(a.magnific_library_id) })),
       brand_kit: Boolean(ds?.magnific_kit_id),
+      autopilot_style: autopilotStyle,
+      uploads: mediaStorageAvailable(),
       limits: { examples: 12, rules: 40, assets: 30 },
     };
   };
@@ -1719,6 +1721,14 @@ export function registerAIChatRoutes({
   router.get('/ai/taste', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
+    res.json({ success: true, taste: await tasteView(auth.userId) });
+  });
+
+  /** Whether Autopilot follows the taught style (on by default). */
+  router.put('/ai/taste/settings', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (typeof (req.body as any)?.autopilot_style === 'boolean') await setAutopilotUsesStyle(q, auth.userId, (req.body as any).autopilot_style);
     res.json({ success: true, taste: await tasteView(auth.userId) });
   });
 
@@ -1731,7 +1741,7 @@ export function registerAIChatRoutes({
     if (!m) return res.status(400).json({ success: false, error: 'Choose a PNG, JPG or WebP image.' });
     const bytes = Buffer.from(m[2], 'base64');
     if (bytes.length > 10 * 1024 * 1024) return res.status(413).json({ success: false, error: 'That image is over 10 MB — choose a smaller one.' });
-    if (!getMediaStorage()) return res.status(503).json({ success: false, error: 'Image uploads are not available yet — paste a link to the image instead.' });
+    if (!mediaStorageAvailable()) return res.status(503).json({ success: false, error: 'Image uploads are not available yet — paste a link to the image instead.' });
     try {
       const url = await storeMediaBytes(bytes, m[1].toLowerCase().replace('jpg', 'jpeg'), auth.userId, { jpeg: true } as any);
       res.json({ success: true, url });
@@ -2054,7 +2064,7 @@ export function registerAIChatRoutes({
       return null;
     };
     const tryFree = async (prompt: string, aspect: string): Promise<{ url: string; charged: number } | null> => {
-      if (!getMediaStorage()) return null;
+      if (!mediaStorageAvailable()) return null;
       const [w, h] = aspect === '9:16' ? [768, 1344] : aspect === '4:5' ? [1024, 1280] : aspect === '16:9' ? [1344, 768] : aspect === '2:3' ? [832, 1216] : [1024, 1024];
       const drawn = await nvidiaImage({ prompt, width: w, height: h }).catch(() => null);
       // Charged like any Lowest-cost image (half the Best-quality price).

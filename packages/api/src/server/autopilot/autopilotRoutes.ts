@@ -2,6 +2,8 @@ import { getTenantControls, upsertTenantControls, getTenantUsageLedger, type Job
 import { dbQuery } from '../../db.ts';
 import { recordPreference } from '../preferenceMemory.ts';
 import { captureDesignSystem } from '../designSystem.ts';
+import { addImageRule, addStyleExample, refreshStyleSummary } from '../imageTaste.ts';
+import { durableMediaUrl } from '../mediaStore.ts';
 import { getAutopilotProviderStatus } from './autopilotProviderBridge.ts';
 import { verifyDeliveryToken, type AssetStorageDriver } from './assetStorage.ts';
 import { verifyDeliveryOverHttps, type DeliveryVerifier, type MediaFetcher } from './assetPipeline.ts';
@@ -1288,6 +1290,24 @@ export function registerAutopilotRoutes(deps: AutopilotRoutesDeps) {
           void recordPreference((sql, p) => dbQuery(sql, p as any[]), tenant.userId, targetState === 'approved'
             ? { kind: 'like', subject: 'design', source: 'autopilot_approve', refId: req.params.id, note: `Approved ${what}${it?.hook ? ` — hook: «${String(it.hook).slice(0, 120)}»` : ''}` }
             : { kind: targetState === 'rejected' ? 'dislike' : 'change', subject: 'design', source: `autopilot_${targetState}`, refId: req.params.id, note: `${targetState === 'rejected' ? 'Rejected' : 'Sent back'} ${what}${notes ? `. Reason: ${notes}` : ''}` });
+          // Reviews also teach the image style (Style panel): an approved image becomes an example,
+          // a rejection reason about the visuals becomes a "never in my images" rule.
+          const images = (Array.isArray(it?.media_assets) ? it.media_assets : []).filter((m: any) => m?.type === 'image' && m?.url);
+          if (images.length) {
+            const q = (sql: string, p?: unknown[]) => dbQuery(sql, p as any[]);
+            void (async () => {
+              if (targetState === 'approved') {
+                for (const m of images.slice(0, 2)) {
+                  // Delivery links can expire: keep a permanent copy for the example.
+                  const url = await durableMediaUrl(String(m.url), tenant.userId, { jpeg: true });
+                  if (/^https:\/\//i.test(url)) await addStyleExample(q, tenant.userId, url, `Approved in Autopilot: ${String(it?.title || '').slice(0, 80)}`, 'liked').catch(() => null);
+                }
+                await refreshStyleSummary(q, tenant.userId).catch(() => undefined);
+              } else if (notes) {
+                await addImageRule(q, tenant.userId, { reason: notes, source: `autopilot_${targetState}`, imageUrl: String(images[0].url) }).catch(() => undefined);
+              }
+            })().catch(() => undefined);
+          }
         }
         return res.json({ success: true, item: updated });
       } catch (err: any) {

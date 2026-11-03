@@ -55,6 +55,7 @@ export function ensureTasteTables(query: Query): Promise<void> {
         images JSONB NOT NULL DEFAULT '[]'::jsonb, magnific_library_id BIGINT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE (user_id, name)
       )`);
+    await query(`ALTER TABLE user_custom_instructions ADD COLUMN IF NOT EXISTS autopilot_style BOOLEAN NOT NULL DEFAULT true`).catch(() => undefined);
     await query(`
       CREATE TABLE IF NOT EXISTS user_style_profile (
         user_id TEXT PRIMARY KEY, summary TEXT NOT NULL DEFAULT '', examples_key TEXT NOT NULL DEFAULT '', updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -393,4 +394,35 @@ export async function generateTastefulImage(params: {
     if (/failed|error|rejected/i.test(txt) && !/in_progress|pending|processing|queued/i.test(txt)) break;
   }
   return null;
+}
+
+
+// ── Autopilot: use the taught style (on by default) ──────────────────────────
+
+export async function autopilotUsesStyle(query: Query, userId: string | null | undefined): Promise<boolean> {
+  if (!userId) return false;
+  try {
+    await ensureTasteTables(query);
+    const { rows } = await query(`SELECT autopilot_style FROM user_custom_instructions WHERE user_id=$1`, [userId]);
+    return rows[0]?.autopilot_style !== false;
+  } catch { return true; }
+}
+
+export async function setAutopilotUsesStyle(query: Query, userId: string, on: boolean): Promise<void> {
+  await ensureTasteTables(query);
+  await query(
+    `INSERT INTO user_custom_instructions (user_id, autopilot_style, updated_at) VALUES ($1,$2,NOW())
+     ON CONFLICT (user_id) DO UPDATE SET autopilot_style=EXCLUDED.autopilot_style, updated_at=NOW()`,
+    [userId, on],
+  );
+}
+
+/**
+ * The taught style for one Autopilot image: the prompt add-on and the extra
+ * reference images (up to 3 examples + photos of saved items it mentions).
+ */
+export function autopilotTasteInputs(t: Taste, text: string): { promptAddon: string; referenceUrls: string[] } {
+  const used = assetsIn(text, t.assets);
+  const refs = [...used.flatMap((a) => a.images.slice(0, 2)), ...t.examples.slice(0, 3).map((e) => e.url)];
+  return { promptAddon: tastePromptHint(t, used), referenceUrls: [...new Set(refs.filter((u) => /^https:\/\//i.test(u)))] };
 }
