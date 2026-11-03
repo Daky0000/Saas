@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { AlertTriangle, Loader2, Trash2, X } from 'lucide-react';
 import { PlatformLogo } from '../PlatformLogo';
 import SocialPostPreview from './SocialPostPreview';
+import ImageFeedback from './ImageFeedback';
 import { FORMAT_LABEL, PLATFORM_META, mediaOf, type SocialPlatformId } from './socialMeta';
 
 export type SocialPostLike = {
@@ -109,6 +110,13 @@ export default function SocialPostModal({
               <textarea value={text} onChange={(e) => setText(e.target.value)} rows={10} disabled={published}
                 className={`mt-1 w-full resize-y rounded-xl border px-3 py-2 text-sm leading-relaxed text-slate-900 outline-none focus:ring-2 ${over > 0 ? 'border-red-300 focus:ring-red-200' : 'border-slate-200 focus:ring-indigo-200'}`} />
             </label>
+
+            {media.some((m) => m.type !== 'video') && (
+              <div className="text-xs text-slate-600">
+                <span className="font-semibold text-slate-700">Like these visuals?</span>{' '}
+                <ImageFeedback compact url={media.find((m) => m.type !== 'video')!.url} about={`${meta.label} ${FORMAT_LABEL[format] ?? ''}: ${post.title}`} />
+              </div>
+            )}
 
             {media.length > 1 && (
               <div>

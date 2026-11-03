@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import { getDesignSystem, designSystemBlock } from './designSystem.ts';
+import { loadTaste, tasteBlock } from './imageTaste.ts';
 import { listPreferences, onPreferenceChange, preferencesBlock } from './preferenceMemory.ts';
 import { dbQuery } from '../db.ts';
 import { logger } from '../logger.ts';
@@ -172,6 +173,12 @@ export async function buildSharedAgentContext(userId: string): Promise<string> {
   await safe(async () => {
     const ds = await getDesignSystem(dbQuery as any, userId);
     const block = designSystemBlock(ds);
+    if (block) parts.push(block.replace(/^## /, ''));
+  });
+
+  // What the user taught the image generators: example designs' style, image rules, saved products/people/places.
+  await safe(async () => {
+    const block = tasteBlock(await loadTaste(dbQuery as any, userId));
     if (block) parts.push(block.replace(/^## /, ''));
   });
 

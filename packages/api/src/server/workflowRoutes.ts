@@ -1,5 +1,6 @@
 import express from 'express';
 import { creditsForMagnific, economyImageCharge, magnificAudioCost, magnificImageCost, magnificLipSyncCost, magnificVideoCost } from './aiPricing.ts';
+import { assetsIn, loadTaste, tastePromptHint } from './imageTaste.ts';
 import { getMediaMode } from './chatActions.ts';
 import { FAST_MODEL, recordAIUsage, hasAICredits, chargeAICredits, callAINonStreaming, resolveTextKey } from '../ai-helpers.ts';
 import type { Router, Response } from 'express';
@@ -175,10 +176,14 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
                   // A model chosen on the node wins; otherwise the user's media setting (lowest cost by default).
                   const magModel = String(cfg.model || ((await getMediaMode(dbQuery, userId)) === 'quality' ? 'magnific-one' : 'z-image'));
                   // Magnific One options only for Magnific One: any `mode` routes the call to Magnific One.
+                  // What the user taught the image generators: learned style + bans in the prompt; examples as references for Magnific One.
+                  const taste = await loadTaste(dbQuery as any, userId).catch(() => null);
+                  const exampleRefs = taste ? taste.examples.slice(0, 3).map((e) => e.url) : [];
                   const imgOpts = magModel === 'magnific-one'
-                    ? { mode: cfg.mode || 'quality', quality: cfg.quality || 'medium', resolution: cfg.resolution || '2k', tiles: cfg.tiles, reference_images: cfg.reference_images }
+                    ? { mode: cfg.mode || 'quality', quality: cfg.quality || 'medium', resolution: cfg.resolution || '2k', tiles: cfg.tiles, reference_images: cfg.reference_images ?? (exampleRefs.length ? exampleRefs : undefined) }
                     : { resolution: cfg.resolution, reference_images: cfg.reference_images };
-                  const genRes = await magnificGenerateImage(magModel, imagePrompt, String(cfg.aspect_ratio || '16:9'), magnificKey, undefined, imgOpts);
+                  const tastedPrompt = [imagePrompt, taste ? tastePromptHint(taste, assetsIn(imagePrompt, taste.assets)) : ''].filter(Boolean).join(' ');
+                  const genRes = await magnificGenerateImage(magModel, tastedPrompt, String(cfg.aspect_ratio || '16:9'), magnificKey, undefined, imgOpts);
                   if (genRes.url && !genRes.error) {
                     triggerData.featured_image = genRes.url;
                     triggerData.image_url = genRes.url;

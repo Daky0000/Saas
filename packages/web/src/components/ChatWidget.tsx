@@ -11,6 +11,7 @@ import {
   MicOff,
   Loader2,
   History,
+  Palette,
   Paperclip,
   Plus,
   RotateCcw,
@@ -23,6 +24,7 @@ import {
 import { getApiBaseUrl } from '../utils/apiBase';
 import { PlatformLogo } from './PlatformLogo';
 import { FORMAT_LABEL as SOCIAL_FORMAT_LABEL, PLATFORM_META, platformId } from './social/socialMeta';
+import ImageFeedback from './social/ImageFeedback';
 import { notifyCreditsChanged } from './CreditBadge';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -888,6 +890,11 @@ function BatchCard({ msg, busy, onResume }: { msg: BatchMessage; busy: boolean; 
                       ))}
                     </div>
                   )}
+                  {media.find((m) => m.type !== 'video') && (
+                    <div className="text-[10.5px] text-slate-500">
+                      Images for this post: <ImageFeedback compact url={media.find((m) => m.type !== 'video')!.url} about={`${meta ? `${meta.label} ${SOCIAL_FORMAT_LABEL[fmt] ?? ''}: ` : ''}${item.post?.title || item.topic}`} />
+                    </div>
+                  )}
                   {item.post?.content && <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-slate-600">{item.post.content}</p>}
                 </div>
               )}
@@ -1005,6 +1012,226 @@ function CustomInstructionsPanel({ onDone }: { onDone: () => void }) {
       {state === 'error' && <p className="text-[11px] text-red-600">Couldn't save — check your connection and press Save again.</p>}
       <DesignSystemSection />
       <LearnedPreferences />
+    </div>
+  );
+}
+
+/** Shrinks a picked image to at most 1600 px (JPEG) before upload, then uploads it; returns its public address. */
+async function uploadImage(file: File): Promise<string> {
+  if (!/^image\/(png|jpe?g|webp)$/i.test(file.type)) throw new Error('Choose a PNG, JPG or WebP image.');
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.88));
+      };
+      img.onerror = () => reject(new Error('That file is not a readable image.'));
+      img.src = String(reader.result);
+    };
+    reader.onerror = () => reject(new Error('Could not read that file.'));
+    reader.readAsDataURL(file);
+  });
+  const r = await fetch(`${getApiBaseUrl()}/api/ai/taste/upload`, { method: 'POST', headers: authJson(), body: JSON.stringify({ data_url: dataUrl }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !d?.url) throw new Error(d?.error || 'Upload failed — please try again.');
+  return String(d.url);
+}
+
+type TasteView = {
+  summary: string;
+  examples: Array<{ id: string; url: string; note: string; source: string; saved_in_magnific: boolean }>;
+  rules: Array<{ id: string; directive: string; avoid_term: string; source: string; enforced_by_magnific: boolean }>;
+  assets: Array<{ id: string; type: 'product' | 'character' | 'locations'; name: string; description: string; images: string[]; saved_in_magnific: boolean }>;
+  brand_kit: boolean;
+  limits: { examples: number; rules: number; assets: number };
+};
+
+const ASSET_TYPES = [
+  { id: 'product', label: 'Product' },
+  { id: 'character', label: 'Person' },
+  { id: 'locations', label: 'Place' },
+] as const;
+
+/** Teach the image generators: example designs, rules from 👎, and saved products/people/places. */
+function StylePanel({ onDone }: { onDone: () => void }) {
+  const [taste, setTaste] = useState<TasteView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [link, setLink] = useState('');
+  const [rule, setRule] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [asset, setAsset] = useState<{ type: 'product' | 'character' | 'locations'; name: string; description: string; images: string[] }>({ type: 'product', name: '', description: '', images: [] });
+  const exampleInput = useRef<HTMLInputElement>(null);
+  const assetInput = useRef<HTMLInputElement>(null);
+
+  const call = async (method: string, path: string, body?: unknown) => {
+    const r = await fetch(`${getApiBaseUrl()}/api/ai/taste${path}`, { method, headers: authJson(), body: body ? JSON.stringify(body) : undefined });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d?.error || 'Something went wrong — please try again.');
+    if (d?.taste) setTaste(d.taste);
+    return d;
+  };
+  const run = async (label: string, fn: () => Promise<unknown>) => {
+    setBusy(label); setError(null);
+    try { await fn(); } catch (e: any) { setError(e?.message || 'Something went wrong.'); } finally { setBusy(null); }
+  };
+  useEffect(() => { void run('load', () => call('GET', '')); }, []);
+
+  const addExamples = (files: FileList | null) => run('examples', async () => {
+    for (const f of Array.from(files ?? []).slice(0, 12)) {
+      const url = await uploadImage(f);
+      await call('POST', '/examples', { url, note: f.name.replace(/\.[a-z]+$/i, '').replace(/[-_]+/g, ' ').slice(0, 80) });
+    }
+  });
+  const addAssetImages = (files: FileList | null) => run('asset-images', async () => {
+    const urls: string[] = [];
+    for (const f of Array.from(files ?? []).slice(0, 6 - asset.images.length)) urls.push(await uploadImage(f));
+    setAsset((a) => ({ ...a, images: [...a.images, ...urls].slice(0, 6) }));
+  });
+
+  const examplesFull = (taste?.examples.length ?? 0) >= (taste?.limits.examples ?? 12);
+  const small = 'text-[10.5px] leading-snug';
+
+  return (
+    <div className="space-y-3 px-3 py-3">
+      <div>
+        <p className="text-xs font-semibold text-ink">Teach your image style</p>
+        <p className={`${small} mt-0.5 text-muted`}>Show examples you love, say what to avoid, and save the products, people and places that must look right. Every image the agents make follows this.</p>
+      </div>
+
+      {taste?.summary ? (
+        <div className="rounded-[10px] border border-blue/30 bg-pale/50 px-2.5 py-2">
+          <p className="text-[10.5px] font-semibold text-ink">Your style, as we understand it</p>
+          <p className={`${small} mt-0.5 text-ink`}>{taste.summary}</p>
+        </div>
+      ) : taste && taste.examples.length > 0 ? (
+        <p className={`${small} text-muted`}>Reading your examples… the style summary appears here in a moment.</p>
+      ) : null}
+
+      {/* 1. Example designs */}
+      <section className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <p className="text-[11.5px] font-semibold text-ink">Example designs you love</p>
+          <span className="text-[10px] tabular-nums text-faint">{taste?.examples.length ?? 0}/{taste?.limits.examples ?? 12}</span>
+        </div>
+        {taste && taste.examples.length > 0 ? (
+          <div className="grid grid-cols-4 gap-1.5">
+            {taste.examples.map((e) => (
+              <div key={e.id} className="group relative aspect-square overflow-hidden rounded-lg border border-line bg-soft" title={e.note || (e.source === 'liked' ? 'You liked this image' : 'Example')}>
+                <img src={e.url} alt={e.note || 'Example design'} className="h-full w-full object-cover" />
+                {e.source === 'liked' && <span className="absolute bottom-0.5 left-0.5 rounded bg-black/60 px-1 text-[9px] text-white">👍</span>}
+                <button type="button" onClick={() => void run('remove', () => call('DELETE', `/examples/${e.id}`))} aria-label="Remove example"
+                  className="absolute right-0.5 top-0.5 hidden h-4 w-4 items-center justify-center rounded-full bg-black/60 text-white group-hover:flex"><X size={10} /></button>
+              </div>
+            ))}
+          </div>
+        ) : <p className={`${small} text-faint`}>No examples yet. Add 3–6 designs (yours or ones you admire) for the best results.</p>}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <input ref={exampleInput} type="file" accept="image/png,image/jpeg,image/webp" multiple hidden onChange={(e) => { void addExamples(e.target.files); e.target.value = ''; }} />
+          <button type="button" disabled={busy !== null || examplesFull} onClick={() => exampleInput.current?.click()}
+            className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-50">
+            {busy === 'examples' ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />} Add images
+          </button>
+          <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="or paste an image link"
+            className="min-w-0 flex-1 rounded-lg border border-line bg-soft px-2 py-1 text-[11px] outline-none focus:border-blue" />
+          <button type="button" disabled={!link.trim() || busy !== null || examplesFull} onClick={() => void run('link', async () => { await call('POST', '/examples', { url: link.trim() }); setLink(''); })}
+            className="rounded-lg border border-line px-2 py-1 text-[11px] font-semibold text-ink disabled:opacity-40">Add</button>
+        </div>
+        <p className={`${small} text-faint`}>Tip: 👍 on any image the agents make adds it here.</p>
+      </section>
+
+      {/* 2. Rules */}
+      <section className="space-y-1.5 border-t border-line pt-2.5">
+        <p className="text-[11.5px] font-semibold text-ink">Never in my images</p>
+        {taste && taste.rules.length > 0 ? (
+          <ul className="space-y-1">
+            {taste.rules.map((r) => (
+              <li key={r.id} className="group flex items-start gap-1.5 rounded-lg bg-soft px-2 py-1">
+                <span className="min-w-0 flex-1">
+                  <span className={`${small} block text-ink`}>{r.directive}</span>
+                  <span className="text-[9.5px] text-faint">bans “{r.avoid_term}”{r.enforced_by_magnific ? ' · enforced by Magnific' : ''}</span>
+                </span>
+                <button type="button" onClick={() => void run('remove', () => call('DELETE', `/rules/${r.id}`))} aria-label="Remove rule" className="shrink-0 text-faint hover:text-red-500"><X size={11} /></button>
+              </li>
+            ))}
+          </ul>
+        ) : <p className={`${small} text-faint`}>No rules yet. 👎 an image and say what's wrong, or add one here.</p>}
+        <div className="flex gap-1">
+          <input value={rule} onChange={(e) => setRule(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && rule.trim()) void run('rule', async () => { await call('POST', '/rules', { reason: rule.trim() }); setRule(''); }); }}
+            placeholder="e.g. No dark backgrounds, no stock-photo people"
+            className="min-w-0 flex-1 rounded-lg border border-line bg-soft px-2 py-1 text-[11px] outline-none focus:border-blue" />
+          <button type="button" disabled={!rule.trim() || busy !== null} onClick={() => void run('rule', async () => { await call('POST', '/rules', { reason: rule.trim() }); setRule(''); })}
+            className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-[11px] font-semibold text-ink disabled:opacity-40">
+            {busy === 'rule' && <Loader2 size={11} className="animate-spin" />}Add
+          </button>
+        </div>
+      </section>
+
+      {/* 3. Products, people and places */}
+      <section className="space-y-1.5 border-t border-line pt-2.5">
+        <div className="flex items-center justify-between">
+          <p className="text-[11.5px] font-semibold text-ink">Products, people &amp; places to keep consistent</p>
+          {!adding && <button type="button" onClick={() => setAdding(true)} className="text-[11px] font-semibold text-indigo-600">+ Add</button>}
+        </div>
+        {taste && taste.assets.length > 0 ? (
+          <ul className="space-y-1">
+            {taste.assets.map((a) => (
+              <li key={a.id} className="group flex items-center gap-2 rounded-lg bg-soft px-2 py-1">
+                {a.images[0] && <img src={a.images[0]} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[11px] font-semibold text-ink">@{a.name} <span className="font-normal text-faint">· {ASSET_TYPES.find((t) => t.id === a.type)?.label} · {a.images.length} photo{a.images.length === 1 ? '' : 's'}</span></span>
+                  {a.description && <span className="block truncate text-[10px] text-muted">{a.description}</span>}
+                </span>
+                <button type="button" onClick={() => void run('remove', () => call('DELETE', `/assets/${a.id}`))} aria-label="Remove item" className="shrink-0 text-faint hover:text-red-500"><X size={11} /></button>
+              </li>
+            ))}
+          </ul>
+        ) : !adding ? <p className={`${small} text-faint`}>Save a product, mascot, team member or location once; mention it (e.g. “a post about @coffee_bag”) and it looks the same every time.</p> : null}
+        {adding && (
+          <div className="space-y-1.5 rounded-[10px] border border-line p-2">
+            <div className="flex gap-1">
+              {ASSET_TYPES.map((t) => (
+                <button key={t.id} type="button" onClick={() => setAsset((a) => ({ ...a, type: t.id }))}
+                  className={`rounded-full border px-2 py-0.5 text-[10.5px] ${asset.type === t.id ? 'border-blue bg-pale text-ink' : 'border-line text-muted'}`}>{t.label}</button>
+              ))}
+            </div>
+            <input value={asset.name} onChange={(e) => setAsset((a) => ({ ...a, name: e.target.value }))} placeholder="Name, e.g. coffee_bag"
+              className="w-full rounded-lg border border-line bg-soft px-2 py-1 text-[11px] outline-none focus:border-blue" />
+            <input value={asset.description} onChange={(e) => setAsset((a) => ({ ...a, description: e.target.value }))} placeholder="Short description, e.g. kraft-paper bag with a blue label"
+              className="w-full rounded-lg border border-line bg-soft px-2 py-1 text-[11px] outline-none focus:border-blue" />
+            <div className="flex flex-wrap items-center gap-1">
+              {asset.images.map((u) => <img key={u} src={u} alt="" className="h-9 w-9 rounded object-cover" />)}
+              <input ref={assetInput} type="file" accept="image/png,image/jpeg,image/webp" multiple hidden onChange={(e) => { void addAssetImages(e.target.files); e.target.value = ''; }} />
+              {asset.images.length < 6 && (
+                <button type="button" disabled={busy !== null} onClick={() => assetInput.current?.click()}
+                  className="inline-flex h-9 items-center gap-1 rounded border border-dashed border-line px-2 text-[10.5px] text-muted">
+                  {busy === 'asset-images' ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />} Photos ({asset.images.length}/6)
+                </button>
+              )}
+            </div>
+            <div className="flex gap-1.5">
+              <button type="button" disabled={!asset.name.trim() || !asset.images.length || busy !== null}
+                onClick={() => void run('asset', async () => { await call('POST', '/assets', asset); setAsset({ type: 'product', name: '', description: '', images: [] }); setAdding(false); })}
+                className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-50">
+                {busy === 'asset' && <Loader2 size={11} className="animate-spin" />} Save
+              </button>
+              <button type="button" onClick={() => { setAdding(false); setAsset({ type: 'product', name: '', description: '', images: [] }); }} className="rounded-lg px-2 py-1 text-[11px] text-muted">Cancel</button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {error && <p className="rounded-lg bg-red-50 px-2 py-1 text-[11px] text-red-600">{error}</p>}
+      {taste && (taste.examples.length > 0 || taste.rules.length > 0 || taste.assets.length > 0) && (
+        <p className={`${small} text-faint`}>{taste.brand_kit ? '✓ Saved in Magnific with your Brand Kit — used on every image.' : 'Saved — sent to Magnific with your next image, then reused.'}</p>
+      )}
+      <button type="button" onClick={onDone} className="rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-muted hover:bg-soft">Back to chat</button>
     </div>
   );
 }
@@ -1288,6 +1515,18 @@ function ToolCard({ msg }: { msg: ToolMessage }) {
       </div>
     );
   }
+  // Images and videos made by the chat: shown, with 👍 / 👎 to teach the style.
+  if (msg.name.startsWith('magnific_') && msg.result?.url) {
+    const url = String(msg.result.url);
+    const isVideo = msg.name.includes('video') || msg.name.includes('lip_sync') || /\.(mp4|mov|webm)(\?|$)/i.test(url);
+    if (msg.name.includes('audio')) return <audio src={url} controls className="w-full" />;
+    return (
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        {isVideo ? <video src={url} controls className="max-h-72 w-full bg-black object-contain" /> : <img src={url} alt="" className="max-h-72 w-full object-contain bg-slate-50" />}
+        {!isVideo && <div className="px-2 py-1"><ImageFeedback compact url={url} about={String(msg.label || '').replace(/…$/, '')} /></div>}
+      </div>
+    );
+  }
   if (msg.name === 'create_poll' || msg.label?.toLowerCase().includes('poll')) {
     return <PollCard title={msg.result?.poll?.title} />;
   }
@@ -1445,6 +1684,7 @@ export default function ChatWidget() {
   const [sessionList, setSessionList] = useState<SessionMeta[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [showInstructions, setShowInstructions] = useState(false);
+  const [showStyle, setShowStyle] = useState(false);
   const savedRef = useRef<Record<string, string>>({});
   const loadedRef = useRef<Record<string, boolean>>({});
 
@@ -2136,11 +2376,15 @@ export default function ChatWidget() {
                 <span className="h-1.5 w-1.5 rounded-full bg-positive" /> ACTIVE
               </div>
             </div>
-            <button type="button" onClick={() => { setShowInstructions((v) => !v); setShowHistory(false); }} title="Custom instructions"
+            <button type="button" onClick={() => { setShowStyle((v) => !v); setShowInstructions(false); setShowHistory(false); }} title="Teach your image style"
+              className={`flex h-6 w-6 items-center justify-center rounded-md hover:bg-soft hover:text-ink ${showStyle ? 'bg-soft text-ink' : 'text-faint'}`} aria-label="Image style">
+              <Palette size={13} />
+            </button>
+            <button type="button" onClick={() => { setShowInstructions((v) => !v); setShowHistory(false); setShowStyle(false); }} title="Custom instructions"
               className={`flex h-6 w-6 items-center justify-center rounded-md hover:bg-soft hover:text-ink ${showInstructions ? 'bg-soft text-ink' : 'text-faint'}`} aria-label="Custom instructions">
               <SlidersHorizontal size={13} />
             </button>
-            <button type="button" onClick={() => { setShowHistory((v) => !v); setShowInstructions(false); }} title="Chat history"
+            <button type="button" onClick={() => { setShowHistory((v) => !v); setShowInstructions(false); setShowStyle(false); }} title="Chat history"
               className={`relative flex h-6 w-6 items-center justify-center rounded-md hover:bg-soft hover:text-ink ${showHistory ? 'bg-soft text-ink' : 'text-faint'}`} aria-label="Chat history">
               <History size={13} />
               {Object.entries(runningIds).some(([id, on]) => on && id !== activeId) && (
@@ -2157,7 +2401,9 @@ export default function ChatWidget() {
 
           {/* Body */}
           <div className="flex-1 overflow-y-auto">
-            {showInstructions ? (
+            {showStyle ? (
+              <StylePanel onDone={() => setShowStyle(false)} />
+            ) : showInstructions ? (
               <CustomInstructionsPanel onDone={() => setShowInstructions(false)} />
             ) : showHistory ? (
               <div className="px-2 py-2">

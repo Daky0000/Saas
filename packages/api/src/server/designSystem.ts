@@ -197,6 +197,26 @@ export function findString(obj: unknown, keys: string[], depth = 0): string | nu
   return null;
 }
 
+/** Depth-first search for the first id under any of these keys, as text — numbers count (Magnific library ids are numeric). */
+export function findId(obj: unknown, keys: string[], depth = 0): string | null {
+  if (obj == null || depth > 6) return null;
+  if (typeof obj === 'string') {
+    try { return findId(JSON.parse(obj), keys, depth + 1); } catch { return null; }
+  }
+  if (Array.isArray(obj)) {
+    for (const v of obj) { const r = findId(v, keys, depth + 1); if (r) return r; }
+    return null;
+  }
+  if (typeof obj === 'object') {
+    for (const k of keys) {
+      const v = (obj as any)[k];
+      if ((typeof v === 'string' && v) || (typeof v === 'number' && Number.isFinite(v))) return String(v);
+    }
+    for (const v of Object.values(obj as any)) { const r = findId(v, keys, depth + 1); if (r) return r; }
+  }
+  return null;
+}
+
 /** Every https image URL in a tool result. */
 export function findImageUrls(obj: unknown, depth = 0, out: string[] = []): string[] {
   if (!obj || depth > 8) return out;

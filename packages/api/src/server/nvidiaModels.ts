@@ -592,3 +592,34 @@ export async function nvidiaImage(params: {
   logger.warn({ attempts }, 'nvidia_image_failed');
   throw new NvidiaError(`Free NVIDIA image models did not answer: ${attempts.map((a) => `${a.model} — ${a.error}`).join('; ')}`, attempts);
 }
+
+/** Vision-capable free models, best first, for describing images. */
+export const VISION_LADDER = ['moonshotai/kimi-k2.6', 'nvidia/nemotron-3.5-super-vl-120b-a12b', 'meta/llama-3.2-90b-vision-instruct'];
+
+/**
+ * Asks a vision model about a set of images (OpenAI image_url content parts).
+ * Used to sum up the style of a user's example designs. Throws NvidiaError
+ * when no vision model answers.
+ */
+export async function nvidiaDescribeImages(params: {
+  system: string; prompt: string; imageUrls: string[]; maxTokens?: number;
+  config?: NvidiaConfig; fetchImpl?: typeof fetch;
+}): Promise<{ text: string; model: string }> {
+  const config = params.config ?? await getNvidiaConfig();
+  if (!config.apiKey) throw new NvidiaError('No NVIDIA key is set (Admin → NVIDIA).', []);
+  const doFetch = params.fetchImpl ?? fetch;
+  const content = [
+    { type: 'text', text: params.prompt },
+    ...params.imageUrls.slice(0, 8).map((url) => ({ type: 'image_url', image_url: { url } })),
+  ];
+  const attempts: Array<{ model: string; error: string }> = [];
+  for (const model of VISION_LADDER.filter((m) => !isDead(m))) {
+    const turn = await completeOnce(doFetch, config, model, 'low', params.maxTokens ?? 700,
+      [{ role: 'system', content: params.system }, { role: 'user', content }]);
+    if (!turn.ok) { attempts.push({ model, error: turn.error }); if (turn.keyRefused) break; continue; }
+    const text = assistantText(turn.message).trim();
+    if (text) return { text, model };
+    attempts.push({ model, error: 'empty answer' });
+  }
+  throw new NvidiaError(`No vision model answered: ${attempts.map((a) => `${a.model} — ${a.error}`).join('; ')}`, attempts);
+}

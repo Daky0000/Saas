@@ -1,6 +1,7 @@
 import express from 'express';
 import { GOOGLE_IMAGE_USD, creditsForMagnific, creditsForUsd, economyImageCharge, economyImageCredits, magnificImageCost, magnificOneCost } from './aiPricing.ts';
-import { designPromptHint, generateWithBrandKit, getDesignSystem } from './designSystem.ts';
+import { designPromptHint, getDesignSystem } from './designSystem.ts';
+import { generateTastefulImage, hasTaste, loadTaste, tastePromptHint } from './imageTaste.ts';
 import { callMagnificMcpTool } from './mcpRoutes.ts';
 import { getMediaMode, type MediaMode } from './chatActions.ts';
 import type { Router, Response } from 'express';
@@ -145,7 +146,7 @@ async function storeGeneratedImage(base64Data: string, mimeType: string): Promis
 export async function generateFeaturedImage(rawPrompt: string, mode: MediaMode = 'economy', ctx: { userId?: string; pool?: Pool | null } = {}): Promise<{ url: string; credits: number; model: string } | null> {
   // The user's design system: Magnific One gets it as the saved Brand Kit; other models get a palette/type hint.
   const design = ctx.userId ? await getDesignSystem((sql, p) => dbQuery(sql, p as any[]), ctx.userId) : null;
-  const prompt = [rawPrompt, designPromptHint(design)].filter(Boolean).join(' ');
+  let prompt = [rawPrompt, designPromptHint(design)].filter(Boolean).join(' ');
   const magnificKey = (await getPlatformKey('magnific', 'apiKey')) || (await getPlatformKey('freepik', 'apiKey')) || process.env.MAGNIFIC_API_KEY || process.env.FREEPIK_API_KEY;
   const googleKey = (await getPlatformKey('google')) || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
   const openaiKey = (await getPlatformKey('openai')) || process.env.OPENAI_API_KEY;
@@ -203,22 +204,32 @@ export async function generateFeaturedImage(rawPrompt: string, mode: MediaMode =
   };
 
   // Cheapest first: free NVIDIA ($0) → Magnific Z-Image ($0.005) → Flux.1 ($0.01) → Gemini ($0.039) → OpenAI ($0.129) → Magnific One ($0.18).
-  const brandKit: Attempt = {
-    model: 'magnific:magnific-one (brand kit)',
-    credits: () => creditsForMagnific(magnificOneCost({ quality: 'medium', resolution: '2k' })),
+  // What the user taught (Brand Kit, example designs, rules, saved items) — tried first when there is any.
+  let taughtCredits = 0;
+  const taught: Attempt = {
+    model: 'magnific:taught-style',
+    credits: () => taughtCredits,
     run: async () => {
-      if (!ctx.userId || !design) return null;
+      if (!ctx.userId || !magnificKey) return null;
+      const t = await loadTaste((sql, p) => dbQuery(sql, p as any[]), ctx.userId);
+      if (mode !== 'quality' && !hasTaste(t)) return null;
       const mcp = (tool: string, args: Record<string, unknown>) => callMagnificMcpTool(ctx.pool ?? null, tool, args, (val: unknown) => {
         const dec = decryptPlatformConfig(val as any);
         return typeof dec === 'string' ? dec : (dec as any)?.value ?? '';
       });
-      const r = await generateWithBrandKit({ query: (sql, p) => dbQuery(sql, p as any[]), userId: ctx.userId, mcp, prompt: rawPrompt, aspectRatio: '1:1', channel: 'social' });
-      return r ? durableMediaUrl(r.url, 'content-plan', { jpeg: true }) : null;
+      const r = await generateTastefulImage({ query: (sql, p) => dbQuery(sql, p as any[]), userId: ctx.userId, mcp, prompt: rawPrompt, aspectRatio: '1:1', mode, channel: 'social', taste: t });
+      if (!r) return null;
+      taughtCredits = mode === 'quality' ? creditsForMagnific(magnificOneCost({ quality: 'medium', resolution: '2k' })) : creditsForMagnific(r.magnificCredits);
+      return durableMediaUrl(r.url, 'content-plan', { jpeg: true });
     },
   };
+  // Models that cannot use references get the learned style and bans in the prompt.
+  const taste = ctx.userId ? await loadTaste((sql, p) => dbQuery(sql, p as any[]), ctx.userId) : null;
+  const tasteHint = taste ? tastePromptHint(taste) : '';
+  prompt = [prompt, tasteHint].filter(Boolean).join(' ');
   const order: Attempt[] = mode === 'quality'
-    ? [brandKit, magnific('magnific-one', { quality: 'medium', resolution: '2k' }), magnific('mystic'), free, gemini, openai]
-    : [free, magnific('z-image'), magnific('flux-dev'), gemini, openai, magnific('magnific-one', { quality: 'medium', resolution: '2k' })];
+    ? [taught, magnific('magnific-one', { quality: 'medium', resolution: '2k' }), magnific('mystic'), free, gemini, openai]
+    : [taught, free, magnific('z-image'), magnific('flux-dev'), gemini, openai, magnific('magnific-one', { quality: 'medium', resolution: '2k' })];
   for (const a of order) {
     try {
       const url = await a.run();

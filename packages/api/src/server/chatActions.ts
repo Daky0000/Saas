@@ -170,6 +170,8 @@ export interface BatchPost {
   scheduled_at: string;
   /** Only when the user asked for drafts: saved unscheduled. */
   as_draft: boolean;
+  /** Saved products/people/places (by name) to show in the visuals. */
+  assets: string[];
 }
 
 /**
@@ -196,6 +198,7 @@ export function batchPosts(input: any, now = new Date()): BatchPost[] {
       const scheduled_at = (valid ? when! : bestSlot(platform, 1 + i, tz, now)).toISOString();
       out.push({
         topic, platform, format, scheduled_at, as_draft: p?.as_draft === true,
+        assets: Array.isArray(p?.assets) ? p.assets.map((x: unknown) => String(x).replace(/^@/, '').trim()).filter(Boolean).slice(0, 4) : [],
         slides: format === 'carousel' ? clampSlides(p?.slides) : 0,
         with_image: format === 'text' ? Boolean(p?.with_image) : false,
         visual: String(p?.visual ?? p?.visual_direction ?? '').trim().slice(0, 600),
