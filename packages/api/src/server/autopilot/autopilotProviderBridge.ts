@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { Pool } from 'pg';
-import { callAINonStreaming, getAIConfig, resolveActiveKey, FAST_MODEL } from '../../ai-helpers.ts';
+import { callAINonStreaming, getAIConfig, resolveActiveKey, resolveTextKey, FAST_MODEL } from '../../ai-helpers.ts';
 import { decryptPlatformConfig } from '../../integration-helpers.ts';
 import { logger } from '../../logger.ts';
 import type { VisualProviderAdapterInput } from './workflowOrchestrator.ts';
@@ -341,7 +341,8 @@ export function buildAutopilotCopyAdapter(_deps?: ProviderBridgeDeps) {
         googleEncryptedKey: null,
         systemPrompt: null,
       }));
-      const apiKey = resolveActiveKey(aiCfg);
+      // Free models first (NVIDIA), the paid key as the fallback — not paid-only.
+      const apiKey = resolveTextKey(aiCfg as any) || resolveActiveKey(aiCfg);
       if (!apiKey) {
         return '';
       }

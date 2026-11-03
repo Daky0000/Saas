@@ -47,6 +47,9 @@ export const ASPECT_TO_WH: Record<string, { width: number; height: number }> = {
   'cinematic_21_9':    { width: 1024, height: 448 },
   'portrait_2_3':      { width: 768,  height: 1152 },
   'standard_3_2':      { width: 1024, height: 683 },
+  'social_post_4_5':   { width: 1024, height: 1280 },
+  'horizontal_2_1':    { width: 1280, height: 640 },
+  'vertical_1_2':      { width: 640,  height: 1280 },
 };
 
 export const MAGNIFIC_ONE_ASPECT_RATIOS = new Set([
@@ -60,7 +63,7 @@ export const MAGNIFIC_ONE_8TILE_EXACT_RATIOS = new Set(['1:1', '2:3', '3:2', '3:
 export const MAGNIFIC_IMAGE_MODELS: Record<string, {
   endpoint: string;
   pollPath: (id: string) => string;
-  bodyType: 'magnific_one' | 'aspect_ratio' | 'image_size' | 'width_height';
+  bodyType: 'magnific_one' | 'aspect_ratio' | 'image_size' | 'width_height' | 'z_image';
   credits: number;
   label?: string;
   tier?: 'flagship' | 'premium' | 'quality' | 'fast';
@@ -82,7 +85,7 @@ export const MAGNIFIC_IMAGE_MODELS: Record<string, {
   'seedream-v4':           { endpoint: '/v1/ai/text-to-image/seedream-v4',                      pollPath: (id) => `/v1/ai/text-to-image/seedream-v4/${id}`,                      bodyType: 'aspect_ratio',  credits: 5, label: 'Seedream 4',                                   tier: 'quality' },
   'runway-t2i':            { endpoint: '/v1/ai/text-to-image/runway',                           pollPath: (id) => `/v1/ai/text-to-image/runway/${id}`,                           bodyType: 'aspect_ratio',  credits: 5, label: 'RunWay Text-to-Image',                         tier: 'quality' },
   'gemini-flash':          { endpoint: '/v1/ai/text-to-image/gemini-2-5-flash-image-preview',   pollPath: (id) => `/v1/ai/text-to-image/gemini-2-5-flash-image-preview/${id}`,   bodyType: 'aspect_ratio',  credits: 6, label: 'Gemini 2.5 Flash Image',                       tier: 'quality' },
-  'z-image':               { endpoint: '/v1/ai/text-to-image/z-image',                          pollPath: (id) => `/v1/ai/text-to-image/z-image/${id}`,                          bodyType: 'aspect_ratio',  credits: 2, label: 'Z-Image Turbo',                                tier: 'fast' },
+  'z-image':               { endpoint: '/v1/ai/text-to-image/z-image',                          pollPath: (id) => `/v1/ai/text-to-image/z-image/${id}`,                          bodyType: 'z_image',  credits: 2, label: 'Z-Image Turbo',                                tier: 'fast' },
 };
 
 export const MAGNIFIC_VIDEO_MODELS: Record<string, {
@@ -118,16 +121,80 @@ export const MAGNIFIC_VIDEO_MODELS: Record<string, {
   'happy-horse-i2v':         { endpoint: '/v1/ai/image-to-video/happy-horse-1',           pollPath: (id) => `/v1/ai/image-to-video/happy-horse-1/${id}`,           credits: 20, label: 'Happy Horse I2V',                                                    supportsI2V: true,  supportsAudio: false },
 };
 
+// Magnific's size names (docs.magnific.com, text-to-image endpoints). 9:16 is
+// "social_story_9_16" and 3:4 "traditional_3_4" — the "portrait_*" names are
+// Z-Image's image_size values and are rejected by the aspect_ratio endpoints.
 export const ASPECT_RATIO_MAP: Record<string, string> = {
   '1:1':   'square_1_1',
   '16:9':  'widescreen_16_9',
-  '9:16':  'portrait_9_16',
+  '9:16':  'social_story_9_16',
   '4:3':   'classic_4_3',
-  '3:4':   'portrait_3_4',
+  '3:4':   'traditional_3_4',
   '21:9':  'cinematic_21_9',
   '2:3':   'portrait_2_3',
   '3:2':   'standard_3_2',
+  '4:5':   'social_post_4_5',
+  '2:1':   'horizontal_2_1',
+  '1:2':   'vertical_1_2',
 };
+
+/** Width ÷ height of every size name and "W:H" ratio the app uses. */
+const SIZE_RATIO: Record<string, number> = {
+  square_1_1: 1, square: 1, square_hd: 1,
+  widescreen_16_9: 16 / 9, landscape_16_9: 16 / 9,
+  social_story_9_16: 9 / 16, portrait_9_16: 9 / 16,
+  classic_4_3: 4 / 3, landscape_4_3: 4 / 3,
+  traditional_3_4: 3 / 4, portrait_3_4: 3 / 4,
+  cinematic_21_9: 21 / 9, portrait_2_3: 2 / 3, standard_3_2: 3 / 2,
+  horizontal_2_1: 2, vertical_1_2: 0.5, social_post_4_5: 0.8, social_5_4: 1.25,
+};
+
+/** "4:5" → 0.8; a size name → its ratio; null when unknown. */
+export function ratioValue(raw: string): number | null {
+  const r = String(raw || '').trim();
+  if (SIZE_RATIO[r] !== undefined) return SIZE_RATIO[r];
+  const m = r.match(/^(\d+(?:\.\d+)?)\s*[:x/]\s*(\d+(?:\.\d+)?)$/);
+  return m && Number(m[2]) > 0 ? Number(m[1]) / Number(m[2]) : null;
+}
+
+/** The option whose shape is closest to the wanted ratio (compared on a log scale, so 4:5 → 3:4, not 1:1). */
+function nearestSize(raw: string, options: readonly string[]): string {
+  const want = ratioValue(raw) ?? ratioValue(ASPECT_RATIO_MAP[raw] ?? '') ?? 1;
+  let best = options[0];
+  let gap = Infinity;
+  for (const o of options) {
+    const v = ratioValue(o);
+    if (v === null) continue;
+    const d = Math.abs(Math.log(v) - Math.log(want));
+    if (d < gap) { gap = d; best = o; }
+  }
+  return best;
+}
+
+// aspect_ratio values each text-to-image endpoint accepts (docs.magnific.com).
+const COMMON_ASPECTS = ['square_1_1', 'widescreen_16_9', 'social_story_9_16', 'portrait_2_3', 'traditional_3_4', 'standard_3_2', 'classic_4_3'] as const;
+const MODEL_ASPECTS: Record<string, readonly string[]> = {
+  'flux-dev': [...COMMON_ASPECTS, 'horizontal_2_1', 'vertical_1_2', 'social_post_4_5'],
+  'seedream-v4-5': [...COMMON_ASPECTS, 'cinematic_21_9'],
+};
+
+/** A valid aspect_ratio name for this image model: the exact one when it takes it, else the closest it does. */
+export function magnificAspectFor(modelId: string, ratio: string): string {
+  const allowed = MODEL_ASPECTS[modelId] ?? COMMON_ASPECTS;
+  const wanted = ASPECT_RATIO_MAP[ratio] ?? ratio;
+  return allowed.includes(wanted) ? wanted : nearestSize(ratio, allowed);
+}
+
+/** Z-Image takes image_size, not aspect_ratio. */
+const Z_IMAGE_SIZES = ['square_hd', 'portrait_3_4', 'portrait_9_16', 'landscape_4_3', 'landscape_16_9'] as const;
+export function zImageSizeFor(ratio: string): string { return nearestSize(ratio, Z_IMAGE_SIZES); }
+
+/** Kling 2.x image/text-to-video aspect_ratio: only these three. */
+const KLING_ASPECTS = ['widescreen_16_9', 'social_story_9_16', 'square_1_1'] as const;
+export function klingAspectFor(ratio: string): string { return nearestSize(ratio, KLING_ASPECTS); }
+
+/** Models whose endpoint takes no reference_images / resolution fields (sending them is refused). */
+const NO_REFERENCE_MODELS = new Set(['z-image', 'flux-dev']);
 
 export const REVERSE_ASPECT_RATIO_MAP: Record<string, string> = {
   'square_1_1':        '1:1',
@@ -140,6 +207,9 @@ export const REVERSE_ASPECT_RATIO_MAP: Record<string, string> = {
   'cinematic_21_9':    '21:9',
   'portrait_2_3':      '2:3',
   'standard_3_2':      '3:2',
+  'social_post_4_5':   '4:5',
+  'horizontal_2_1':    '2:1',
+  'vertical_1_2':      '1:2',
 };
 
 export const FREEPIK_IMAGE_MODELS: Record<string, { credits: number; type: 'async' }> = {
@@ -363,7 +433,9 @@ export async function magnificOneGenerate(
 }> {
   const mode: 'quality' | 'draft' = opts.mode === 'draft' ? 'draft' : 'quality';
   const rawRatio = String(opts.aspect_ratio || '1:1').trim();
-  const normalizedRatio = REVERSE_ASPECT_RATIO_MAP[rawRatio] ?? (MAGNIFIC_ONE_ASPECT_RATIOS.has(rawRatio) ? rawRatio : '1:1');
+  // Not one of Magnific One's ratios (e.g. Instagram's 4:5): the closest one (4:5 → 3:4), not a square.
+  const mapped = REVERSE_ASPECT_RATIO_MAP[rawRatio] ?? rawRatio;
+  const normalizedRatio = MAGNIFIC_ONE_ASPECT_RATIOS.has(mapped) ? mapped : nearestSize(mapped, [...MAGNIFIC_ONE_ASPECT_RATIOS]);
 
   const body: Record<string, unknown> = {
     prompt: String(opts.prompt || '').trim().slice(0, 2000),
@@ -472,21 +544,27 @@ export async function magnificGenerateImage(
   }
 
   const mappedAspect = ASPECT_RATIO_MAP[aspectRatio] ?? aspectRatio ?? 'square_1_1';
+  const resolvedModel = MAGNIFIC_IMAGE_MODELS[modelId] ? modelId : 'flux-2-turbo';
   let body: Record<string, any>;
-  if (cfg.bodyType === 'image_size') {
+  if (cfg.bodyType === 'z_image') {
+    body = { prompt, image_size: zImageSizeFor(aspectRatio || '1:1'), output_format: 'jpeg' };
+  } else if (cfg.bodyType === 'image_size') {
     const wh = ASPECT_TO_WH[mappedAspect] ?? { width: 1024, height: 1024 };
     body = { prompt, image_size: wh, guidance_scale: 2.5, output_format: 'jpeg' };
   } else if (cfg.bodyType === 'width_height') {
     const wh = ASPECT_TO_WH[mappedAspect] ?? { width: 1024, height: 768 };
     body = { prompt, width: wh.width, height: wh.height };
   } else {
-    body = { prompt, aspect_ratio: mappedAspect };
+    body = { prompt, aspect_ratio: magnificAspectFor(resolvedModel, aspectRatio || '1:1') };
   }
-  if (Array.isArray(extraOpts?.reference_images) && extraOpts.reference_images.length > 0) {
-    body.reference_images = extraOpts.reference_images.slice(0, 10);
-  }
-  if (extraOpts?.resolution) {
-    body.resolution = extraOpts.resolution;
+  // Only endpoints that take them get reference images / a resolution (the others refuse the request).
+  if (!NO_REFERENCE_MODELS.has(resolvedModel)) {
+    if (Array.isArray(extraOpts?.reference_images) && extraOpts.reference_images.length > 0) {
+      body.reference_images = extraOpts.reference_images.slice(0, 10);
+    }
+    if (extraOpts?.resolution) {
+      body.resolution = extraOpts.resolution;
+    }
   }
 
   const submitResp = await magnificPost(cfg.endpoint, body, apiKey);
@@ -724,7 +802,8 @@ export async function magnificGenerateVideo(
     if (opts.reference_video_url) body.reference_video = opts.reference_video_url;
   } else if (modelKey.startsWith('kling-')) {
     body.duration = String(opts.duration === 10 || opts.duration === '10' ? '10' : '5');
-    if (opts.aspect_ratio) body.aspect_ratio = REVERSE_ASPECT_RATIO_MAP[opts.aspect_ratio] ?? opts.aspect_ratio;
+    // Kling 2.x takes only widescreen_16_9 | social_story_9_16 | square_1_1 ("9:16" is refused).
+    if (opts.aspect_ratio) body.aspect_ratio = klingAspectFor(String(opts.aspect_ratio));
     if (opts.negative_prompt) body.negative_prompt = opts.negative_prompt;
     if (opts.cfg_scale != null) body.cfg_scale = opts.cfg_scale;
     if (opts.generate_audio != null) body.generate_audio = Boolean(opts.generate_audio);

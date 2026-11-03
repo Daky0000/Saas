@@ -1734,3 +1734,40 @@ test('PostgreSQL E2E: migrations, full Autopilot SQL repository, review link, an
     await pool.end();
   }
 });
+
+
+test('Caption regenerate: priced first — nothing written or charged until confirmed; then an AI caption in the brand voice is saved and charged once', async () => {
+  const charges: Array<{ userId: string; credits: number; reason: string }> = [];
+  const prompts: string[] = [];
+  const { app } = createAutopilotTestHarness({
+    copyAdapter: async (prompt: string, system?: string) => {
+      prompts.push(`${system}\n${prompt}`);
+      return JSON.stringify({ caption: 'Our rye proves for 18 hours. Saturday batch: 40 loaves.', hashtags: ['leedsbakery'] });
+    },
+    chargeCredits: async (userId, credits, reason) => { charges.push({ userId, credits, reason }); },
+    creditBalance: async () => 500,
+  });
+  const hdr = { 'x-test-user': 'caption_regen_user' };
+  await request(app).put('/api/v1/autopilot/business-profile').set(hdr).send({
+    business_name: 'Crumb & Co', industry: 'Bakery', niche: 'Sourdough', business_model: 'saas', primary_objective: 'launches',
+  }).expect(200);
+  const created = await request(app).post('/api/v1/autopilot/items').set(hdr).send({
+    title: 'Rye loaf is back', hook: 'Back on Saturday', caption: 'Old caption', format: 'static_graphic', target_channels: ['instagram'],
+  }).expect(201);
+  const id = created.body.item.id;
+
+  const quote = await request(app).post(`/api/v1/autopilot/items/${id}/regenerate-caption`).set(hdr).send({}).expect(200);
+  assert.equal(quote.body.needs_confirmation, true);
+  assert.ok(quote.body.credits > 0);
+  assert.equal(prompts.length, 0, 'the AI is not called before the user confirms');
+  assert.equal(charges.length, 0, 'nothing is charged before the user confirms');
+  const unchanged = await request(app).get(`/api/v1/autopilot/items/${id}`).set(hdr).expect(200);
+  assert.equal(unchanged.body.item.caption, 'Old caption');
+
+  const done = await request(app).post(`/api/v1/autopilot/items/${id}/regenerate-caption`).set(hdr).send({ confirm: true }).expect(200);
+  assert.match(done.body.item.caption, /Our rye proves for 18 hours/);
+  assert.match(done.body.item.caption, /#leedsbakery/);
+  assert.doesNotMatch(done.body.item.caption, /Actionable insight/);
+  assert.deepEqual(charges.map((c) => [c.credits, c.reason]), [[quote.body.credits, 'autopilot_caption_regenerate']]);
+  assert.match(prompts[0], /Crumb & Co/, 'written from the business profile');
+});
