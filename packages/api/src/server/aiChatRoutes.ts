@@ -11,7 +11,7 @@ import { chatTurnKey, makeToolMemo } from './aiCheckpoints.ts';
 import { TurnRegistry, cleanTurnId } from './chatTurns.ts';
 import { classifyChatTurn, fitHistory, routePaidModel, routingMode } from './aiRouting.ts';
 import { startSpan } from './aiTrace.ts';
-import { nvidiaAgentLoop, nvidiaChat, nvidiaImage } from './nvidiaModels.ts';
+import { nvidiaAgentLoop, nvidiaChat } from './nvidiaModels.ts';
 import { buildSharedAgentContext, invalidateSharedContext, recordAgentInsight } from './agentSharedContext.ts';
 import { aiChatLimiter } from '../middleware/rateLimiter.ts';
 import { creditsForMagnific, economyImageCharge, magnificImageCost, magnificOneCost } from './aiPricing.ts';
@@ -35,7 +35,7 @@ import {
 } from './magnificRoutes.ts';
 import { durableMediaUrl, durableMediaUrls, getMediaStorage, mediaStorageAvailable, storeMediaBytes } from './mediaStore.ts';
 import {
-  socialImageCredits, PLATFORM_LABEL, FORMAT_LABEL, socialCopyCredits, SOCIAL_IMAGE_MODEL, SOCIAL_IMAGE_OPTS, ECONOMY_IMAGE_MODEL, ECONOMY_IMAGE_FALLBACK, SOCIAL_VIDEO_MODEL_FROM_IMAGE, socialVideoCredits, socialVideoModel,
+  socialImageCredits, PLATFORM_LABEL, FORMAT_LABEL, socialCopyCredits, SOCIAL_IMAGE_MODEL, SOCIAL_IMAGE_OPTS, ECONOMY_IMAGE_MODEL, ECONOMY_IMAGE_OPTS, ECONOMY_IMAGE_FALLBACKS, SOCIAL_VIDEO_MODEL_FROM_IMAGE, socialVideoCredits, socialVideoModel,
   aspectRatioFor, bestTimesGuide, isVideoFormat, validTimeZone, parsePiece, pieceSchema, publishText, slidePrompt, writingRules,
   mediaPlan, normalizePlatform, type SocialFormat, type SocialPiece, type SocialPlatform,
 } from './socialFormats.ts';
@@ -1569,7 +1569,7 @@ export function registerAIChatRoutes({
           const media = posts.reduce((acc, p) => { const m = mediaPlan(p.format, p.slides, p.with_image); return { images: acc.images + m.images, videos: acc.videos + m.videos }; }, { images: 0, videos: 0 });
           const hasMagnific = Boolean(await getMagnificApiKey(pool as any).catch(() => null));
           const where = auth.role === 'admin' ? ' (Admin → Magnific AI)' : '';
-          if (media.images && !hasMagnific && !mediaStorageAvailable()) estimate.lines.push(`⚠ Images can't be generated right now — the image service isn't set up${where}. Posts will be saved without images, and images won't be charged.`);
+          if (media.images && !hasMagnific) estimate.lines.push(`⚠ Images need Magnific${where}, and it isn't set up. Posts will be saved without images, and images won't be charged.`);
           if (media.videos && !hasMagnific) estimate.lines.push(`⚠ Videos need Magnific${where}. Reels/videos will be saved with a cover image only, and video won't be charged.`);
         }
         if (estimate && name === 'magnific_space_or_flow') {
@@ -2403,10 +2403,11 @@ export function registerAIChatRoutes({
       snap.credits += credits;
     };
 
-    /** One image: Magnific (charged) when configured, else the free NVIDIA model (not charged). Null when neither can draw. */
     /**
-     * One image, cheapest first (or Magnific One first on "best quality").
-     * Charged at the model actually used × 1.54; the free NVIDIA model is not charged.
+     * One image, always from Magnific: Nano Banana Pro on "Lowest cost", Magnific One
+     * (through the Brand Kit) on "Best quality", each with cheaper Magnific fallbacks.
+     * The free NVIDIA model is not used for post images. Null when Magnific cannot draw it
+     * (the post is still saved, with a note saying why, and the image is not charged).
      */
     // The last reason an image could not be made, per post, so the note can say why (not just "could not").
     const mediaErrors = new Map<number, string>();
@@ -2420,13 +2421,6 @@ export function registerAIChatRoutes({
       logger.warn({ err: r?.error, model }, 'chat_batch_image_failed');
       if (r?.error) mediaErrors.set(postIndex, `${model}: ${String(r.error).replace(/\s+/g, ' ').slice(0, 160)}`);
       return null;
-    };
-    const tryFree = async (prompt: string, aspect: string): Promise<{ url: string; charged: number } | null> => {
-      if (!mediaStorageAvailable()) return null;
-      const [w, h] = aspect === '9:16' ? [768, 1344] : aspect === '4:5' ? [1024, 1280] : aspect === '16:9' ? [1344, 768] : aspect === '2:3' ? [832, 1216] : [1024, 1024];
-      const drawn = await nvidiaImage({ prompt, width: w, height: h }).catch(() => null);
-      // Charged like any Lowest-cost image (half the Best-quality price).
-      return drawn ? { url: await storeMediaBytes(drawn.bytes, drawn.mimeType, userId, { jpeg: true } as any), charged: economyImageCharge(0) } : null;
     };
     const drawImage = async (rawPrompt: string, aspect: string, refs: string[], channel?: string, assetNames: string[] = [], postIndex = -1): Promise<{ url: string; charged: number } | null> => {
       // What the user taught: example designs (style references), rules (Brand Kit bans), saved products/people/places.
@@ -2447,13 +2441,16 @@ export function registerAIChatRoutes({
         const branded = await generateWithBrandKit({ query: q, userId, mcp: magnificMcp, prompt: rawPrompt, aspectRatio: aspect, channel }).catch(() => null);
         if (branded) return { url: await durableMediaUrl(branded.url, userId), charged: socialImageCredits('quality') };
         return (await tryMagnific(SOCIAL_IMAGE_MODEL, { ...SOCIAL_IMAGE_OPTS, ...withRefs }, prompt, aspect, postIndex))
-          ?? (await tryMagnific(ECONOMY_IMAGE_MODEL, {}, prompt, aspect, postIndex))
-          ?? (await tryFree(prompt, aspect));
+          ?? (await tryMagnific(ECONOMY_IMAGE_MODEL, { ...ECONOMY_IMAGE_OPTS, ...withRefs }, prompt, aspect, postIndex));
       }
-      // Z-Image and Flux Dev take no reference images: the learned style rides in the prompt instead.
-      return (await tryFree(prompt, aspect))
-        ?? (await tryMagnific(ECONOMY_IMAGE_MODEL, {}, prompt, aspect, postIndex))
-        ?? (await tryMagnific(ECONOMY_IMAGE_FALLBACK, {}, prompt, aspect, postIndex));
+      // Nano Banana Pro takes the reference images; Z-Image and Flux Dev do not (the learned style rides in the prompt).
+      const first = await tryMagnific(ECONOMY_IMAGE_MODEL, { ...ECONOMY_IMAGE_OPTS, ...withRefs }, prompt, aspect, postIndex);
+      if (first) return first;
+      for (const fallback of ECONOMY_IMAGE_FALLBACKS) {
+        const drawn = await tryMagnific(fallback, {}, prompt, aspect, postIndex);
+        if (drawn) return drawn;
+      }
+      return null;
     };
 
     const worker = async () => {
@@ -2535,8 +2532,8 @@ export function registerAIChatRoutes({
             await saveMedia();
             await setItem(index, { post: { ...post } }, img.charged);
           };
-          if (prompts.length && !magnificKey && !mediaStorageAvailable()) {
-            notes.push('Images need Magnific (Admin → Magnific AI) or media storage — none were made.');
+          if (prompts.length && !magnificKey) {
+            notes.push('Images need Magnific (Admin → Magnific AI) — none were made, and none were charged.');
           } else if (prompts.length) {
             await setItem(index, { status: 'media', progress: prompts.length > 1 ? `Image 1 of ${prompts.length} (sets the look)` : 'Creating the image', post: { ...post } });
             await makeImage(0, []);

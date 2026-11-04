@@ -330,5 +330,5 @@ export async function saveMediaMode(query: Query, userId: string, mode: MediaMod
 export function mediaModeBlock(mode: MediaMode): string {
   return mode === 'quality'
     ? `## MEDIA SETTING: BEST QUALITY\nThe user chose best quality. Default images: Magnific One (magnific_one_generate or model "magnific-one"). Default video: magnific_generate_video with model "kling-3-0". A model the user names always wins.`
-    : `## MEDIA SETTING: LOWEST COST (default)\nUse the lowest-cost model that does the job unless the user names a model. Images: magnific_generate_image with model "z-image" (never magnific_one_generate, mystic, nano-banana or seedream unless asked). Video: magnific_generate_video with model "kling-v2-6-pro" (never seedance or kling 3 unless asked).`;
+    : `## MEDIA SETTING: LOWEST COST (default)\nUse the lowest-cost model that does the job unless the user names a model. Images: magnific_generate_image with model "nano-banana-pro" (never magnific_one_generate, mystic or seedream unless asked; "z-image" only for quick drafts the user asks for). Video: magnific_generate_video with model "kling-v2-6-pro" (never seedance or kling 3 unless asked).`;
 }

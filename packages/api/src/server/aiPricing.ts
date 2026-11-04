@@ -107,7 +107,7 @@ const IMAGE_COST_UNKNOWN = 200;
 export function magnificImageCost(model: string, opts: { mode?: string; quality?: string; resolution?: string } = {}): number {
   if (model === 'magnific-one' || opts.mode === 'draft') return magnificOneCost(opts);
   const base = IMAGE_COST[model] ?? IMAGE_COST_UNKNOWN;
-  return opts.resolution === '4k' ? base * 2 : base;
+  return String(opts.resolution ?? '').toLowerCase() === '4k' ? base * 2 : base;
 }
 
 // ── Magnific: video ──────────────────────────────────────────────────────────
