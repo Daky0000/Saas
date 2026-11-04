@@ -17,7 +17,6 @@ import { buildSharedAgentContext } from './agentSharedContext.ts';
 import { magnificOneGenerate, magnificGenerateImage } from './magnificRoutes.ts';
 import { DEFAULT_OPENAI_IMAGE_MODEL, OPENAI_IMAGE_MODELS } from './openaiRoutes.ts';
 import { durableMediaUrl, getMediaStorage, mediaStorageAvailable, storeMediaBytes } from './mediaStore.ts';
-import { nvidiaImage, nvidiaReady } from './nvidiaModels.ts';
 import { openCheckpoint } from './aiCheckpoints.ts';
 import { fence } from './aiGuard.ts';
 import { clearCalendarCacheForUser } from '../link-metadata.ts';
@@ -139,9 +138,9 @@ async function storeGeneratedImage(base64Data: string, mimeType: string): Promis
 }
 
 /**
- * A featured image and the credits it costs (provider price × 1.54; the free
- * NVIDIA model costs nothing). 'economy' (the default) tries the cheapest
- * first; 'quality' starts with Magnific One.
+ * A featured image and the credits it costs (provider price × 1.54).
+ * 'economy' (the default) starts with Magnific Nano Banana Pro; 'quality'
+ * starts with Magnific One.
  */
 export async function generateFeaturedImage(rawPrompt: string, mode: MediaMode = 'economy', ctx: { userId?: string; pool?: Pool | null } = {}): Promise<{ url: string; credits: number; model: string } | null> {
   // The user's design system: Magnific One gets it as the saved Brand Kit; other models get a palette/type hint.
@@ -160,19 +159,10 @@ export async function generateFeaturedImage(rawPrompt: string, mode: MediaMode =
       // Magnific links expire; the piece keeps a copy in object storage.
       const r = model === 'magnific-one'
         ? await magnificOneGenerate({ prompt, mode: 'quality', quality: 'medium', resolution: '2k', aspect_ratio: '1:1' }, magnificKey)
-        : await magnificGenerateImage(model, prompt, '1:1', magnificKey);
+        : await magnificGenerateImage(model, prompt, '1:1', magnificKey, undefined, opts as any);
       return r.url && !r.error ? durableMediaUrl(r.url, 'content-plan', { jpeg: true }) : null;
     },
   });
-  const free: Attempt = {
-    model: 'nvidia:flux.2-klein (free)',
-    credits: () => 0,
-    run: async () => {
-      if (!(await nvidiaReady())) return null;
-      const drawn = await nvidiaImage({ prompt, width: 1024, height: 1024 });
-      return storeGeneratedImage(drawn.bytes.toString('base64'), drawn.mimeType);
-    },
-  };
   const gemini: Attempt = {
     model: 'google:gemini-2.5-flash-image',
     credits: () => creditsForUsd(GOOGLE_IMAGE_USD['google-gemini-flash']),
@@ -203,7 +193,8 @@ export async function generateFeaturedImage(rawPrompt: string, mode: MediaMode =
     },
   };
 
-  // Cheapest first: free NVIDIA ($0) → Magnific Z-Image ($0.005) → Flux.1 ($0.01) → Gemini ($0.039) → OpenAI ($0.129) → Magnific One ($0.18).
+  // Lowest cost: Nano Banana Pro ($0.075) → Z-Image ($0.005) → Flux.1 ($0.01) → Gemini ($0.039) → OpenAI ($0.129) → Magnific One ($0.18).
+  // The free NVIDIA model is not used for published images: its results were not good enough.
   // What the user taught (Brand Kit, example designs, rules, saved items) — tried first when there is any.
   let taughtCredits = 0;
   const taught: Attempt = {
@@ -228,8 +219,8 @@ export async function generateFeaturedImage(rawPrompt: string, mode: MediaMode =
   const tasteHint = taste ? tastePromptHint(taste) : '';
   prompt = [prompt, tasteHint].filter(Boolean).join(' ');
   const order: Attempt[] = mode === 'quality'
-    ? [taught, magnific('magnific-one', { quality: 'medium', resolution: '2k' }), magnific('mystic'), free, gemini, openai]
-    : [taught, free, magnific('z-image'), magnific('flux-dev'), gemini, openai, magnific('magnific-one', { quality: 'medium', resolution: '2k' })];
+    ? [taught, magnific('magnific-one', { quality: 'medium', resolution: '2k' }), magnific('nano-banana-pro', { resolution: '2K' }), magnific('mystic'), gemini, openai]
+    : [taught, magnific('nano-banana-pro', { resolution: '2K' }), magnific('z-image'), magnific('flux-dev'), gemini, openai, magnific('magnific-one', { quality: 'medium', resolution: '2k' })];
   for (const a of order) {
     try {
       const url = await a.run();

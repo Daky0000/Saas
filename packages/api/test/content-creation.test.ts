@@ -202,6 +202,8 @@ test('magnific: sizes follow the docs per model — 4:5 posts, 9:16 reels, Z-Ima
     await mg.magnificGenerateImage('seedream-v4', 'rye loaf', '9:16', 'k');
     await mg.magnificOneGenerate({ prompt: 'rye loaf', aspect_ratio: '4:5' } as any, 'k');
     await mg.magnificGenerateVideo({ model: 'kling-v2-6-pro', prompt: 'steam rises', image_url: 'https://example.com/c.jpg', aspect_ratio: '9:16', duration: 5 } as any, 'k');
+    await mg.magnificGenerateImage('nano-banana-pro', 'rye loaf', '4:5', 'k', undefined, { reference_images: ['https://example.com/a.png', 'https://cdn.example.com/b.jpg?x=1'], resolution: '2k' } as any);
+    await mg.magnificGenerateImage('nano-banana-pro', 'rye loaf', 'social_story_9_16', 'k');
   } finally {
     (axios as any).post = realPost;
   }
@@ -218,6 +220,37 @@ test('magnific: sizes follow the docs per model — 4:5 posts, 9:16 reels, Z-Ima
   assert.equal(kling.aspect_ratio, 'social_story_9_16', 'Kling 2.6 refuses "9:16"');
   assert.equal(kling.image, 'https://example.com/c.jpg');
   assert.equal(kling.duration, '5');
+
+  // Nano Banana Pro (docs.magnific.com): "W:H" ratios, "2K", references as {image, mime_type}.
+  const [nano, nanoStory] = sent.slice(5).map((x) => x.body);
+  assert.match(sent[5].url, /\/v1\/ai\/text-to-image\/nano-banana-pro$/);
+  assert.equal(nano.aspect_ratio, '4:5', 'Nano Banana takes "4:5" itself, not social_post_4_5');
+  assert.equal(nano.resolution, '2K');
+  assert.deepEqual(nano.reference_images, [
+    { image: 'https://example.com/a.png', mime_type: 'image/png' },
+    { image: 'https://cdn.example.com/b.jpg?x=1', mime_type: 'image/jpeg' },
+  ]);
+  assert.equal(nanoStory.aspect_ratio, '9:16', 'a size name is turned back into its ratio');
+  assert.equal(nanoStory.resolution, undefined, 'no resolution asked: the model default (2K)');
+  assert.equal(nanoStory.reference_images, undefined);
+  assert.equal(mg.nanoBananaRatioFor('2:1'), '16:9', 'an unsupported shape goes to the closest supported one');
+});
+
+test('post images: Lowest cost is Nano Banana Pro then cheaper Magnific models, never the free model; still the Lowest-cost price', async () => {
+  const sf = await import('../src/server/socialFormats.ts');
+  assert.equal(sf.ECONOMY_IMAGE_MODEL, 'nano-banana-pro');
+  assert.deepEqual([...sf.ECONOMY_IMAGE_FALLBACKS], ['z-image', 'flux-dev']);
+  assert.ok(!sf.ECONOMY_IMAGE_FALLBACKS.some((m) => /nvidia|klein/i.test(m)));
+  const pricing = await import('../src/server/aiPricing.ts');
+  const nanoCost = pricing.creditsForMagnific(pricing.magnificImageCost('nano-banana-pro', { resolution: '2K' }));
+  assert.ok(nanoCost <= sf.socialImageCredits('economy'), `Nano Banana Pro (${nanoCost}) fits in the Lowest-cost price (${sf.socialImageCredits('economy')})`);
+  assert.equal(pricing.magnificImageCost('nano-banana-pro', { resolution: '4K' }), 2 * pricing.magnificImageCost('nano-banana-pro'), '4K is priced double, whatever the case');
+  // The batch writer no longer has a free image path at all.
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../src/server/aiChatRoutes.ts', import.meta.url), 'utf8');
+  const drawImage = src.slice(src.indexOf('const drawImage = async'), src.indexOf('const worker = async'));
+  assert.ok(drawImage.length > 100);
+  assert.doesNotMatch(drawImage, /tryFree|nvidiaImage/);
 });
 
 // ── End to end: the chat corrects a false "30 posts created", then Proceed makes them ──

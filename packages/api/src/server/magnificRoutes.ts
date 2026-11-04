@@ -63,15 +63,15 @@ export const MAGNIFIC_ONE_8TILE_EXACT_RATIOS = new Set(['1:1', '2:3', '3:2', '3:
 export const MAGNIFIC_IMAGE_MODELS: Record<string, {
   endpoint: string;
   pollPath: (id: string) => string;
-  bodyType: 'magnific_one' | 'aspect_ratio' | 'image_size' | 'width_height' | 'z_image';
+  bodyType: 'magnific_one' | 'aspect_ratio' | 'image_size' | 'width_height' | 'z_image' | 'nano_banana';
   credits: number;
   label?: string;
   tier?: 'flagship' | 'premium' | 'quality' | 'fast';
 }> = {
   'magnific-one':          { endpoint: '/v1/ai/magnific-one',                                    pollPath: (id) => `/v1/ai/magnific-one/${id}`,                                    bodyType: 'magnific_one',  credits: 6, label: 'Magnific One (Art-Directed 4K & Draft Sheets)', tier: 'flagship' },
-  'nano-banana-pro':       { endpoint: '/v1/ai/text-to-image/nano-banana-pro',                  pollPath: (id) => `/v1/ai/text-to-image/nano-banana-pro/${id}`,                  bodyType: 'aspect_ratio',  credits: 4, label: 'Nano Banana Pro (Product Text, Sketches & Edits)', tier: 'flagship' },
-  'nano-banana-2':         { endpoint: '/v1/ai/text-to-image/nano-banana-2',                    pollPath: (id) => `/v1/ai/text-to-image/nano-banana-2/${id}`,                    bodyType: 'aspect_ratio',  credits: 4, label: 'Nano Banana 2 (4K Character Sheets & Mockups)', tier: 'flagship' },
-  'nano-banana-pro-flash': { endpoint: '/v1/ai/text-to-image/nano-banana-pro-flash',            pollPath: (id) => `/v1/ai/text-to-image/nano-banana-pro-flash/${id}`,            bodyType: 'aspect_ratio',  credits: 3, label: 'Nano Banana Pro Flash',                        tier: 'fast' },
+  'nano-banana-pro':       { endpoint: '/v1/ai/text-to-image/nano-banana-pro',                  pollPath: (id) => `/v1/ai/text-to-image/nano-banana-pro/${id}`,                  bodyType: 'nano_banana',  credits: 4, label: 'Nano Banana Pro (Product Text, Sketches & Edits)', tier: 'flagship' },
+  'nano-banana-2':         { endpoint: '/v1/ai/text-to-image/nano-banana-2',                    pollPath: (id) => `/v1/ai/text-to-image/nano-banana-2/${id}`,                    bodyType: 'nano_banana',  credits: 4, label: 'Nano Banana 2 (4K Character Sheets & Mockups)', tier: 'flagship' },
+  'nano-banana-pro-flash': { endpoint: '/v1/ai/text-to-image/nano-banana-pro-flash',            pollPath: (id) => `/v1/ai/text-to-image/nano-banana-pro-flash/${id}`,            bodyType: 'nano_banana',  credits: 3, label: 'Nano Banana Pro Flash',                        tier: 'fast' },
   'mystic':                { endpoint: '/v1/ai/mystic',                                          pollPath: (id) => `/v1/ai/mystic/${id}`,                                          bodyType: 'aspect_ratio',  credits: 8, label: 'Mystic (Ultra-Realistic)',                     tier: 'premium' },
   'flux-kontext-pro':      { endpoint: '/v1/ai/text-to-image/flux-kontext-pro',                 pollPath: (id) => `/v1/ai/text-to-image/flux-kontext-pro/${id}`,                 bodyType: 'aspect_ratio',  credits: 5, label: 'Flux Kontext Pro',                             tier: 'quality' },
   'flux-2-pro':            { endpoint: '/v1/ai/text-to-image/flux-2-pro',                       pollPath: (id) => `/v1/ai/text-to-image/flux-2-pro/${id}`,                       bodyType: 'width_height',  credits: 5, label: 'Flux 2 Pro',                                   tier: 'quality' },
@@ -192,6 +192,33 @@ export function zImageSizeFor(ratio: string): string { return nearestSize(ratio,
 /** Kling 2.x image/text-to-video aspect_ratio: only these three. */
 const KLING_ASPECTS = ['widescreen_16_9', 'social_story_9_16', 'square_1_1'] as const;
 export function klingAspectFor(ratio: string): string { return nearestSize(ratio, KLING_ASPECTS); }
+
+/**
+ * Nano Banana (Gemini image) models take a plain "W:H" aspect_ratio, an upper-case
+ * resolution ("1K" | "2K" | "4K") and reference images as {image, mime_type} objects
+ * (docs.magnific.com, Nano Banana Pro text-to-image).
+ */
+const NANO_BANANA_RATIOS = ['1:1', '2:3', '3:2', '4:3', '3:4', '5:4', '4:5', '16:9', '9:16', '21:9'] as const;
+export function nanoBananaRatioFor(ratio: string): string { return nearestSize(ratio || '1:1', NANO_BANANA_RATIOS); }
+export function nanoBananaResolution(raw: unknown): '1K' | '2K' | '4K' | null {
+  const r = String(raw ?? '').trim().toUpperCase();
+  return r === '1K' || r === '2K' || r === '4K' ? r : null;
+}
+function imageMimeFor(url: string): 'image/png' | 'image/webp' | 'image/jpeg' {
+  const path = url.split(/[?#]/)[0].toLowerCase();
+  if (path.endsWith('.png') || url.startsWith('data:image/png')) return 'image/png';
+  if (path.endsWith('.webp') || url.startsWith('data:image/webp')) return 'image/webp';
+  return 'image/jpeg';
+}
+/** The request body a Nano Banana model accepts. */
+export function nanoBananaBody(prompt: string, aspectRatio: string, opts: { reference_images?: string[]; resolution?: string } = {}): Record<string, unknown> {
+  const body: Record<string, unknown> = { prompt, aspect_ratio: nanoBananaRatioFor(aspectRatio) };
+  const resolution = nanoBananaResolution(opts.resolution);
+  if (resolution) body.resolution = resolution;
+  const refs = (opts.reference_images ?? []).filter((u) => typeof u === 'string' && u.trim()).slice(0, 14);
+  if (refs.length) body.reference_images = refs.map((image) => ({ image, mime_type: imageMimeFor(image) }));
+  return body;
+}
 
 /** Models whose endpoint takes no reference_images / resolution fields (sending them is refused). */
 const NO_REFERENCE_MODELS = new Set(['z-image', 'flux-dev']);
@@ -546,7 +573,9 @@ export async function magnificGenerateImage(
   const mappedAspect = ASPECT_RATIO_MAP[aspectRatio] ?? aspectRatio ?? 'square_1_1';
   const resolvedModel = MAGNIFIC_IMAGE_MODELS[modelId] ? modelId : 'flux-2-turbo';
   let body: Record<string, any>;
-  if (cfg.bodyType === 'z_image') {
+  if (cfg.bodyType === 'nano_banana') {
+    body = nanoBananaBody(prompt, aspectRatio || '1:1', { reference_images: extraOpts?.reference_images, resolution: extraOpts?.resolution });
+  } else if (cfg.bodyType === 'z_image') {
     body = { prompt, image_size: zImageSizeFor(aspectRatio || '1:1'), output_format: 'jpeg' };
   } else if (cfg.bodyType === 'image_size') {
     const wh = ASPECT_TO_WH[mappedAspect] ?? { width: 1024, height: 1024 };
@@ -558,7 +587,7 @@ export async function magnificGenerateImage(
     body = { prompt, aspect_ratio: magnificAspectFor(resolvedModel, aspectRatio || '1:1') };
   }
   // Only endpoints that take them get reference images / a resolution (the others refuse the request).
-  if (!NO_REFERENCE_MODELS.has(resolvedModel)) {
+  if (!NO_REFERENCE_MODELS.has(resolvedModel) && cfg.bodyType !== 'nano_banana') {
     if (Array.isArray(extraOpts?.reference_images) && extraOpts.reference_images.length > 0) {
       body.reference_images = extraOpts.reference_images.slice(0, 10);
     }

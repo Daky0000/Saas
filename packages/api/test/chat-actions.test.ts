@@ -124,7 +124,7 @@ test('pricing: the estimate shown for a Magnific tool is what it charges, and fo
 });
 
 test('media setting: lowest cost by default — cheapest image and video models unless a model is named or quality is chosen', () => {
-  assert.equal(ca.defaultImageModel({}), 'z-image');
+  assert.equal(ca.defaultImageModel({}), 'nano-banana-pro', 'Lowest cost: Magnific Nano Banana Pro, never the free model');
   assert.equal(ca.defaultImageModel({ media_mode: 'quality' }), 'magnific-one');
   assert.equal(ca.defaultImageModel({ model: 'mystic' }), 'mystic', 'a model the user names wins');
   assert.equal(ca.defaultVideoModel({}), 'kling-v2-6-pro');

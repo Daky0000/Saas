@@ -25,10 +25,16 @@ export const PLATFORM_FORMATS: Record<SocialPlatform, SocialFormat[]> = {
 
 /** Image models for social media: the lowest-cost one by default, Magnific One on "best quality". */
 export const SOCIAL_IMAGE_MODEL = 'magnific-one';
-/** Lowest-cost paid image model (Magnific Z-Image, 5 Magnific credits ≈ $0.005); the free NVIDIA model is tried before it. */
-export const ECONOMY_IMAGE_MODEL = 'z-image';
-/** Next cheapest if Z-Image fails (Flux.1, ≈ $0.01). */
-export const ECONOMY_IMAGE_FALLBACK = 'flux-dev';
+/**
+ * The "Lowest cost" image model: Magnific Nano Banana Pro at 2K (75 Magnific credits).
+ * Strong layout, legible text and it takes reference images, while staying under the
+ * Lowest-cost price (half a Best-quality image). The free NVIDIA model is never used
+ * for post images: its results were not good enough to publish.
+ */
+export const ECONOMY_IMAGE_MODEL = 'nano-banana-pro';
+export const ECONOMY_IMAGE_OPTS = { resolution: '2K' } as const;
+/** Tried in order if Nano Banana Pro fails: Z-Image (5 credits), then Flux Dev. */
+export const ECONOMY_IMAGE_FALLBACKS = ['z-image', 'flux-dev'] as const;
 export const SOCIAL_VIDEO_MODEL_FROM_IMAGE = 'kling-v2-6-pro';
 /** Best-quality video: Kling 3.0 (450 Magnific credits per 5 s, twice Kling 2.6). */
 export const QUALITY_VIDEO_MODEL = 'kling-3-0';
